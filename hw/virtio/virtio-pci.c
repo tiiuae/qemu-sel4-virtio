@@ -808,6 +808,19 @@ static uint32_t virtio_read_config(PCIDevice *pci_dev,
     return pci_default_read_config(pci_dev, address, len);
 }
 
+void qemu_virtio_address_space_read(PCIDevice *pci_dev, hwaddr addr, uint8_t *buf, int len)
+{
+	uint32_t data;
+
+	data = virtio_read_config(pci_dev, addr, len);
+	memcpy(buf, &data, len);
+}
+
+void qemu_virtio_address_space_write(PCIDevice *pci_dev, hwaddr addr, uint8_t *buf, int len)
+{
+	virtio_write_config(pci_dev, addr, *(uint32_t *)buf, len);
+}
+
 static int kvm_virtio_pci_vq_vector_use(VirtIOPCIProxy *proxy,
                                         unsigned int vector)
 {
@@ -1919,6 +1932,8 @@ static void virtio_pci_pre_plugged(DeviceState *d, Error **errp)
     virtio_add_feature(&vdev->host_features, VIRTIO_F_BAD_FEATURE);
 }
 
+void sel4_register_pci_device(PCIDevice *d);
+
 /* This is called by virtio-bus just after the device is plugged. */
 static void virtio_pci_device_plugged(DeviceState *d, Error **errp)
 {
@@ -2062,6 +2077,8 @@ static void virtio_pci_device_plugged(DeviceState *d, Error **errp)
 
     proxy->pci_dev.config_write = virtio_write_config;
     proxy->pci_dev.config_read = virtio_read_config;
+
+    sel4_register_pci_device(&proxy->pci_dev);
 
     if (legacy) {
         size = VIRTIO_PCI_REGION_SIZE(&proxy->pci_dev)

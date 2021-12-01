@@ -160,11 +160,11 @@ static const MemMapEntry base_memmap[] = {
     /* ...repeating for a total of NUM_VIRTIO_TRANSPORTS, each of that size */
     [VIRT_PLATFORM_BUS] =       { 0x0c000000, 0x02000000 },
     [VIRT_SECURE_MEM] =         { 0x0e000000, 0x01000000 },
-    [VIRT_PCIE_MMIO] =          { 0x10000000, 0x2eff0000 },
+    [VIRT_PCIE_MMIO] =          { 0x50000000, 0x6eff0000 },
     [VIRT_PCIE_PIO] =           { 0x3eff0000, 0x00010000 },
     [VIRT_PCIE_ECAM] =          { 0x3f000000, 0x01000000 },
     /* Actual RAM size depends on initial RAM and device memory settings */
-    [VIRT_MEM] =                { GiB, LEGACY_RAMLIMIT_BYTES },
+    [VIRT_MEM] =                { 0x48000000, 0x08000000 },
 };
 
 /*
@@ -1461,7 +1461,7 @@ static void create_pcie(VirtMachineState *vms)
     mmio_reg = sysbus_mmio_get_region(SYS_BUS_DEVICE(dev), 1);
     memory_region_init_alias(mmio_alias, OBJECT(dev), "pcie-mmio",
                              mmio_reg, base_mmio, size_mmio);
-    memory_region_add_subregion(get_system_memory(), base_mmio, mmio_alias);
+    memory_region_add_subregion_overlap(get_system_memory(), base_mmio, mmio_alias, 1);
 
     if (vms->highmem_mmio) {
         /* Map high MMIO space */
