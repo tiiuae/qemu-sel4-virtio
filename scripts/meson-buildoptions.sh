@@ -458,6 +458,8 @@ _meson_option_parse() {
     --disable-vvfat) printf "%s" -Dvvfat=disabled ;;
     --enable-whpx) printf "%s" -Dwhpx=enabled ;;
     --disable-whpx) printf "%s" -Dwhpx=disabled ;;
+    --enable-sel4) printf "%s" -Dsel4=enabled ;;
+    --disable-sel4) printf "%s" -Dsel4=disabled ;;
     --enable-xen) printf "%s" -Dxen=enabled ;;
     --disable-xen) printf "%s" -Dxen=disabled ;;
     --enable-xen-pci-passthrough) printf "%s" -Dxen_pci_passthrough=enabled ;;
