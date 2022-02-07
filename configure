@@ -331,6 +331,7 @@ vnc_sasl="auto"
 vnc_jpeg="auto"
 vnc_png="auto"
 xkbcommon="auto"
+sel4="auto"
 xen="$default_feature"
 xen_ctrl_version="$default_feature"
 xen_pci_passthrough="auto"
@@ -1082,6 +1083,10 @@ for opt do
   --disable-netmap) netmap="no"
   ;;
   --enable-netmap) netmap="yes"
+  ;;
+  --disable-sel4) sel4="disabled"
+  ;;
+  --enable-sel4) sel4="enabled"
   ;;
   --disable-xen) xen="disabled"
   ;;
@@ -1839,6 +1844,7 @@ disabled with --disable-FEATURE, default is enabled if available
   virtiofsd       build virtiofs daemon (virtiofsd)
   libudev         Use libudev to enumerate host devices
   mpath           Multipath persistent reservation passthrough
+  sel4            seL4 backend driver support
   xen             xen backend driver support
   xen-pci-passthrough    PCI passthrough support for Xen
   brlapi          BrlAPI (Braile)
@@ -2469,6 +2475,10 @@ EOF
     feature_not_found "nptl" "Install glibc and linux kernel headers."
   fi
 fi
+
+##########################################
+# seL4 probe
+
 
 ##########################################
 # xen probe
@@ -6410,7 +6420,7 @@ NINJA=$ninja $meson setup \
         -Db_coverage=$(if test "$gcov" = yes; then echo true; else echo false; fi) \
         -Db_lto=$lto -Dcfi=$cfi -Dcfi_debug=$cfi_debug \
         -Dmalloc=$malloc -Dmalloc_trim=$malloc_trim -Dsparse=$sparse \
-        -Dkvm=$kvm -Dhax=$hax -Dwhpx=$whpx -Dhvf=$hvf \
+        -Dkvm=$kvm -Dhax=$hax -Dwhpx=$whpx -Dhvf=$hvf -Dsel4=$sel4 \
         -Dxen=$xen -Dxen_pci_passthrough=$xen_pci_passthrough -Dtcg=$tcg \
         -Dcocoa=$cocoa -Dgtk=$gtk -Dmpath=$mpath -Dsdl=$sdl -Dsdl_image=$sdl_image \
         -Dvnc=$vnc -Dvnc_sasl=$vnc_sasl -Dvnc_jpeg=$vnc_jpeg -Dvnc_png=$vnc_png \

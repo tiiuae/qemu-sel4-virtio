@@ -91,6 +91,8 @@ if cpu in ['x86', 'x86_64']
   }
 endif
 
+accelerator_targets += { 'CONFIG_SEL4': ['aarch64-softmmu'] }
+
 edk2_targets = [ 'arm-softmmu', 'aarch64-softmmu', 'i386-softmmu', 'x86_64-softmmu' ]
 install_edk2_blobs = false
 if get_option('install_blobs')
@@ -200,6 +202,9 @@ endif
 accelerators = []
 if not get_option('kvm').disabled() and targetos == 'linux'
   accelerators += 'CONFIG_KVM'
+endif
+if not get_option('sel4').disabled()
+  accelerators += 'CONFIG_SEL4'
 endif
 if not get_option('xen').disabled() and 'CONFIG_XEN_BACKEND' in config_host
   accelerators += 'CONFIG_XEN'
@@ -2576,6 +2581,7 @@ if have_system
   summary_info += {'HAX support':       config_all.has_key('CONFIG_HAX')}
   summary_info += {'HVF support':       config_all.has_key('CONFIG_HVF')}
   summary_info += {'WHPX support':      config_all.has_key('CONFIG_WHPX')}
+  summary_info += {'seL4 support':      config_all.has_key('CONFIG_SEL4')}
   summary_info += {'Xen support':       config_host.has_key('CONFIG_XEN_BACKEND')}
   if config_host.has_key('CONFIG_XEN_BACKEND')
     summary_info += {'xen ctrl version':  config_host['CONFIG_XEN_CTRL_INTERFACE_VERSION']}
