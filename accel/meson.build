@@ -8,6 +8,7 @@ if have_system
   subdir('qtest')
   subdir('kvm')
   subdir('xen')
+  subdir('sel4')
   subdir('stubs')
 endif
 

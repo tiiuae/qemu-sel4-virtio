@@ -75,6 +75,8 @@ option('hvf', type: 'feature', value: 'auto',
        description: 'HVF acceleration support')
 option('nvmm', type: 'feature', value: 'auto',
        description: 'NVMM acceleration support')
+option('sel4', type: 'feature', value: 'auto',
+       description: 'seL4 backend support')
 option('xen', type: 'feature', value: 'auto',
        description: 'Xen backend support')
 option('xen_pci_passthrough', type: 'feature', value: 'auto',
