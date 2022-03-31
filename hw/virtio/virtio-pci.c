@@ -808,19 +808,6 @@ static uint32_t virtio_read_config(PCIDevice *pci_dev,
     return pci_default_read_config(pci_dev, address, len);
 }
 
-void qemu_virtio_address_space_read(PCIDevice *pci_dev, hwaddr addr, uint8_t *buf, int len)
-{
-	uint32_t data;
-
-	data = virtio_read_config(pci_dev, addr, len);
-	memcpy(buf, &data, len);
-}
-
-void qemu_virtio_address_space_write(PCIDevice *pci_dev, hwaddr addr, uint8_t *buf, int len)
-{
-	virtio_write_config(pci_dev, addr, *(uint32_t *)buf, len);
-}
-
 static int kvm_virtio_pci_vq_vector_use(VirtIOPCIProxy *proxy,
                                         unsigned int vector)
 {

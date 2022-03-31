@@ -832,6 +832,8 @@ static void ivshmem_write_config(PCIDevice *pdev, uint32_t address,
     }
 }
 
+void sel4_register_pci_device(PCIDevice *d);
+
 static void ivshmem_common_realize(PCIDevice *dev, Error **errp)
 {
     IVShmemState *s = IVSHMEM_COMMON(dev);
@@ -914,6 +916,8 @@ static void ivshmem_common_realize(PCIDevice *dev, Error **errp)
                      PCI_BASE_ADDRESS_MEM_PREFETCH |
                      PCI_BASE_ADDRESS_MEM_TYPE_64,
                      s->ivshmem_bar2);
+
+    sel4_register_pci_device(PCI_DEVICE(s));
 }
 
 static void ivshmem_exit(PCIDevice *dev)
