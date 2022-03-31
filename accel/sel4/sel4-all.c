@@ -140,9 +140,6 @@ static int is_raw_address(uint32_t address)
     return 0;
 }
 
-void qemu_virtio_address_space_read(PCIDevice *pci_dev, hwaddr addr, uint8_t *buf, int len);
-void qemu_virtio_address_space_write(PCIDevice *pci_dev, hwaddr addr, uint8_t *buf, int len);
-
 void qmp_ringbuf_write(const char *, const char *, bool, int, Error **);
 char *qmp_ringbuf_read(const char *device, int64_t size, bool has_format, int format, Error **errp);
 
@@ -165,10 +162,13 @@ static unsigned int pci_base_count;
 static void qemu_pci_read(void *out, uint32_t address, int len, unsigned int pcidev)
 {
     qemu_mutex_lock_iothread();
-    if (is_raw_address(address)) {
+    if (pcidev > 16) {
         address_space_read(&address_space_memory, address, MEMTXATTRS_UNSPECIFIED, out, len);
     } else {
-        qemu_virtio_address_space_read(pci_devs[pcidev], address, out, len);
+        PCIDevice *dev = pci_devs[pcidev];
+
+        uint32_t val = dev->config_read(dev, address, len);
+        memcpy(out, &val, len);
     }
     qemu_mutex_unlock_iothread();
 }
@@ -176,10 +176,15 @@ static void qemu_pci_read(void *out, uint32_t address, int len, unsigned int pci
 static void qemu_pci_write(void *out, uint32_t address, int len, unsigned int pcidev)
 {
     qemu_mutex_lock_iothread();
-    if (is_raw_address(address)) {
+    if (pcidev > 16) {
         address_space_write(&address_space_memory, address, MEMTXATTRS_UNSPECIFIED, out, len);
     } else {
-        qemu_virtio_address_space_write(pci_devs[pcidev], address, out, len);
+        PCIDevice *dev = pci_devs[pcidev];
+
+        uint32_t val = 0;
+        memcpy(&val, out, len);
+
+        dev->config_write(dev, address, val, len);
     }
     qemu_mutex_unlock_iothread();
 }
