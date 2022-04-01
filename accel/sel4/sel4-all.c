@@ -30,8 +30,8 @@ static void vmm_doorbell_wait(void);
 
 void sel4_set_irq(unsigned int irq, bool);
 
-#define UIO_INDEX_DATAPORT  0
-#define UIO_INDEX_EVENT_BAR 1
+#define UIO_INDEX_DATAPORT  1
+#define UIO_INDEX_EVENT_BAR 0
 
 #define DP_CTRL 0
 #define DP_MEM  1
