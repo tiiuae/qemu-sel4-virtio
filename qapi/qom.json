@@ -648,6 +648,7 @@
             '*discard-data': 'bool',
             'mem-path': 'str',
             '*pmem': { 'type': 'bool', 'if': 'CONFIG_LIBPMEM' },
+            '*offset': 'size',
             '*readonly': 'bool' } }
 
 ##
