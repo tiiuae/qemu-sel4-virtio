@@ -360,13 +360,14 @@ static void handle_qemu_request(rpcmsg_t *msg)
 static void *do_sel4_virtio(void *opaque)
 {
     for (;;) {
-        vmm_doorbell_wait();
-
         rpcmsg_t *msg = rpcmsg_queue_head(rx_queue);
         if (msg) {
             handle_qemu_request(msg);
             rpcmsg_queue_advance_head(rx_queue);
+	    continue;
         }
+
+        vmm_doorbell_wait();
     }
 
     return NULL;
