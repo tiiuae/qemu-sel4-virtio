@@ -46,15 +46,21 @@ typedef struct {
 
 #define QEMU_OP_MASK        0xffULL
 #define QEMU_OP_SHIFT       0
-#define QEMU_OP(__x__)      (((__x__) & QEMU_OP_MASK) >> QEMU_OP_SHIFT)
+#define QEMU_OP(__x__)      ((unsigned int)(((__x__) & QEMU_OP_MASK) >> QEMU_OP_SHIFT))
 
 #define QEMU_PCIDEV_MASK    0xff00ULL
 #define QEMU_PCIDEV_SHIFT   8
-#define QEMU_PCIDEV(__x__)  (((__x__) & QEMU_PCIDEV_MASK) >> QEMU_PCIDEV_SHIFT)
+#define QEMU_PCIDEV(__x__)  ((unsigned int)(((__x__) & QEMU_PCIDEV_MASK) >> QEMU_PCIDEV_SHIFT))
 
-#define QEMU_ID_MASK        0xffff0000ULL
+#define QEMU_ID_MASK        0xff0000ULL
 #define QEMU_ID_SHIFT       16
-#define QEMU_ID(__x__)      (((__x__) & QEMU_ID_MASK) >> QEMU_ID_SHIFT)
+#define QEMU_ID(__x__)      ((unsigned int)(((__x__) & QEMU_ID_MASK) >> QEMU_ID_SHIFT))
+#define QEMU_ID_FROM(__x__) (((__x__) << QEMU_ID_SHIFT) & QEMU_ID_MASK)
+
+#define QEMU_VCPU_MASK       0xff000000ULL
+#define QEMU_VCPU_SHIFT      24
+#define QEMU_VCPU(__x__)     ((unsigned int)(((__x__) & QEMU_VCPU_MASK) >> QEMU_VCPU_SHIFT))
+#define QEMU_VCPU_NONE       0xff
 
 #define RPCMSG_BUFFER_SIZE  32
 
