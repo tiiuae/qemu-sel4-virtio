@@ -1,3 +1,9 @@
+/*
+ * Copyright 2022, Technology Innovation Institute
+ *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
 #include "qemu/osdep.h"
 #include "qemu/error-report.h"
 #include "qemu/module.h"
