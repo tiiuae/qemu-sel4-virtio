@@ -94,14 +94,6 @@ static void sel4_setup_post(MachineState *ms, AccelState *accel)
         do_sel4_virtio, s, QEMU_THREAD_JOINABLE);
 }
 
-static int is_raw_address(uint32_t address)
-{
-    if (address >= (1ULL << 20))
-        return 1;
-
-    return 0;
-}
-
 void qmp_ringbuf_write(const char *, const char *, bool, int, Error **);
 char *qmp_ringbuf_read(const char *device, int64_t size, bool has_format, int format, Error **errp);
 
@@ -264,7 +256,7 @@ static void sel4_pci_do_io(struct sel4_ioreq_pci *pci)
     }
 }
 
-static inline handle_ioreq(SeL4State *s)
+static inline void handle_ioreq(SeL4State *s)
 {
     struct sel4_ioreq *ioreq;
     int slot;
@@ -429,7 +421,6 @@ static int sel4_init(MachineState *ms)
         fprintf(stderr, "sel4: iohandler mmap failed %m\n");
         goto err;
     }
-
 
     memory_listener_register(&sel4_io_listener, &address_space_memory);
 
