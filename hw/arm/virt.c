@@ -1688,6 +1688,14 @@ static uint64_t virt_cpu_mp_affinity(VirtMachineState *vms, int idx)
     return arm_cpu_mp_affinity(idx, clustersz);
 }
 
+static MemMapEntry noop_memmap_customize(const MemMapEntry *base_memmap, int i)
+{
+    return base_memmap[i];
+}
+
+MemMapEntry (*virt_memmap_customize)(const MemMapEntry *base_memmap, int i) =
+    noop_memmap_customize;
+
 static void virt_set_memmap(VirtMachineState *vms, int pa_bits)
 {
     MachineState *ms = MACHINE(vms);
@@ -1697,7 +1705,7 @@ static void virt_set_memmap(VirtMachineState *vms, int pa_bits)
     vms->memmap = extended_memmap;
 
     for (i = 0; i < ARRAY_SIZE(base_memmap); i++) {
-        vms->memmap[i] = base_memmap[i];
+        vms->memmap[i] = virt_memmap_customize(base_memmap, i);
     }
 
     if (ms->ram_slots > ACPI_MAX_RAM_SLOTS) {
