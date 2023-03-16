@@ -17,9 +17,13 @@
 #include "hw/pci/pci_bus.h"
 #include "migration/vmstate.h"
 
+#include "hw/arm/virt.h"
+
 #include <stdarg.h>
 #include <sys/ioctl.h>
 #include <sel4/sel4_virt.h>
+
+extern MemMapEntry (*virt_memmap_customize)(const MemMapEntry *base_memmap, int i);
 
 void tii_printf(const char *fmt, ...);
 
@@ -444,6 +448,90 @@ err:
     return rc;
 }
 
+static const int vmid = 1;
+static unsigned long uservm_ram_base;
+static unsigned long uservm_ram_size;
+static unsigned long uservm_pcie_mmio_base;
+static unsigned long uservm_pcie_mmio_size;
+
+static int parse_kernel_bootargs(void)
+{
+    FILE *fp;
+    char buffer[4096];
+    char *s, *arg, *sp;
+    int ret = -1;
+    int id;
+
+    if ((fp = fopen("/proc/cmdline", "r")) == NULL) {
+        goto out;
+    }
+    if (fgets(buffer, sizeof buffer, fp) == NULL) {
+        goto close_fp;
+    }
+
+    for (s = buffer; (arg = strtok_r(s, " \t\n", &sp)) != NULL; s = NULL) {
+        if (strncmp(arg, "uservm=", 7)) {
+            continue;
+        }
+        if (sscanf(arg + 7, "%d,%lx,%lx,%lx,%lx",
+            &id,
+            &uservm_ram_base,
+            &uservm_ram_size,
+            &uservm_pcie_mmio_base,
+            &uservm_pcie_mmio_size) != 5) {
+            fprintf(stderr, "Improper %s in bootargs\n", arg);
+            goto close_fp;
+        }
+        if (id == vmid) {
+            ret = 0;
+            break;
+        }
+    }
+
+close_fp:
+    fclose(fp);
+
+out:
+    return ret;
+}
+
+static MemMapEntry sel4_memmap_customize(const MemMapEntry *base_memmap, int i)
+{
+    static bool init = false;
+    MemMapEntry e;
+
+    if (!init) {
+        if (parse_kernel_bootargs()) {
+            fprintf(stderr, "No uservm details given in kernel bootargs\n");
+            exit(1);
+        }
+        init = true;
+    }
+
+    switch (i) {
+    case VIRT_MEM:
+        e.base = uservm_ram_base;
+        e.size = uservm_ram_size;
+        break;
+    case VIRT_PCIE_MMIO:
+        e.base = uservm_pcie_mmio_base;
+        e.size = uservm_pcie_mmio_size;
+        break;
+    case VIRT_PCIE_PIO:
+        e.base = uservm_pcie_mmio_base + uservm_pcie_mmio_size;
+        e.size = 0x10000;
+        break;
+    case VIRT_PCIE_ECAM:
+        e.base = uservm_pcie_mmio_base + uservm_pcie_mmio_size + 0x10000;
+        e.size = 0x1000000;
+        break;
+    default:
+        return base_memmap[i];
+    };
+
+    return e;
+}
+
 static void sel4_accel_class_init(ObjectClass *oc, void *data)
 {
     AccelClass *ac = ACCEL_CLASS(oc);
@@ -462,6 +550,8 @@ static void sel4_accel_instance_init(Object *obj)
     s->vmfd = -1;
     s->ioreqfd = -1;
     s->ioreq_buffer = NULL;
+
+    virt_memmap_customize = sel4_memmap_customize;
 }
 
 static const TypeInfo sel4_accel_type = {
