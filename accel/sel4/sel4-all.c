@@ -25,6 +25,8 @@
 
 extern MemMapEntry (*virt_memmap_customize)(const MemMapEntry *base_memmap, int i);
 
+static MemMapEntry sel4_memmap_customize(const MemMapEntry *base_memmap, int i);
+
 void tii_printf(const char *fmt, ...);
 
 static MemoryRegion ram_mr;
@@ -130,8 +132,17 @@ static int pci_resolve_irq(PCIDevice *pci_dev, int irq_num)
     return irq_num;
 }
 
+static inline bool using_sel4(void)
+{
+    return virt_memmap_customize == sel4_memmap_customize;
+}
+
 void sel4_register_pci_device(PCIDevice *d)
 {
+    if (!using_sel4()) {
+        return;
+    }
+
     SeL4State *s = SEL4_STATE(current_accel());
     struct sel4_vpci_device vpcidev = {
             .pcidev = pci_dev_count,
@@ -187,6 +198,10 @@ static sel4_listener_region_t *lr_find_match(hwaddr addr, Int128 size)
 
 void sel4_set_irq(unsigned int irq, bool state)
 {
+    if (!using_sel4()) {
+        return;
+    }
+
     SeL4State *s = SEL4_STATE(current_accel());
     struct sel4_irqline irqline = {
         .irq = irq,
