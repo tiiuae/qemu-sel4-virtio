@@ -50,7 +50,8 @@ typedef struct SeL4State
     int vmfd;
     int ioreqfd;
     struct sel4_iohandler_buffer *ioreq_buffer;
-} SeL4State;
+    MemoryListener mem_listener;
+} SeL4State ;
 
 #define TYPE_SEL4_ACCEL ACCEL_CLASS_NAME("sel4")
 
@@ -161,41 +162,6 @@ void sel4_register_pci_device(PCIDevice *d)
     printf("IRQ for this device is %d\n", pci_resolve_irq(d, 0));
 }
 
-typedef struct {
-    Int128 size;
-    hwaddr offset_within_address_space;
-    EventNotifier *n;
-} sel4_listener_region_t;
-
-#define LR_MAX 512
-
-static sel4_listener_region_t lrs[LR_MAX];
-static unsigned int nlrs;
-
-static int lr_match(sel4_listener_region_t *lr, hwaddr addr, Int128 size)
-{
-    if (addr >= lr->offset_within_address_space + int128_get64(lr->size)) {
-        return 0;
-    }
-    if (addr + int128_get64(size) < lr->offset_within_address_space) {
-        return 0;
-    }
-    return 1;
-}
-
-static sel4_listener_region_t *lr_find_match(hwaddr addr, Int128 size)
-{
-    int i;
-
-    for (i = 0; i < nlrs; i++) {
-        if (lr_match(&lrs[i], addr, size)) {
-            return &lrs[i];
-        }
-    }
-
-    return NULL;
-}
-
 void sel4_set_irq(unsigned int irq, bool state)
 {
     if (!using_sel4()) {
@@ -224,13 +190,10 @@ static void sel4_change_state_handler(void *opaque, bool running, RunState state
 
 static void sel4_mmio_do_io(struct sel4_ioreq_mmio *mmio)
 {
-    sel4_listener_region_t *lr = NULL;
-
     qemu_mutex_lock_iothread();
     switch (mmio->direction) {
     case SEL4_IO_DIR_WRITE:
         address_space_write(&address_space_memory, mmio->addr, MEMTXATTRS_UNSPECIFIED, &mmio->data, mmio->len);
-        lr = lr_find_match(mmio->addr, mmio->len);
         break;
     case SEL4_IO_DIR_READ:
         address_space_read(&address_space_memory, mmio->addr, MEMTXATTRS_UNSPECIFIED, &mmio->data, mmio->len);
@@ -240,17 +203,12 @@ static void sel4_mmio_do_io(struct sel4_ioreq_mmio *mmio)
         break;
     }
     qemu_mutex_unlock_iothread();
-
-    if (lr) {
-        event_notifier_set(lr->n);
-    }
 }
 
 static void sel4_pci_do_io(struct sel4_ioreq_pci *pci)
 {
     PCIDevice *dev = pci_devs[pci->pcidev];
     uint32_t val;
-    sel4_listener_region_t *lr = NULL;
 
     qemu_mutex_lock_iothread();
     switch (pci->direction) {
@@ -258,7 +216,6 @@ static void sel4_pci_do_io(struct sel4_ioreq_pci *pci)
         val = 0;
         memcpy(&val, &pci->data, pci->len);
         dev->config_write(dev, pci->addr, val, pci->len);
-        lr = lr_find_match(pci->addr + pci_base[pci->pcidev], pci->len);
         break;
     case SEL4_IO_DIR_READ:
         val = dev->config_read(dev, pci->addr, pci->len);
@@ -269,10 +226,6 @@ static void sel4_pci_do_io(struct sel4_ioreq_pci *pci)
         break;
     }
     qemu_mutex_unlock_iothread();
-
-    if (lr) {
-        event_notifier_set(lr->n);
-    }
 }
 
 static inline void handle_ioreq(SeL4State *s)
@@ -316,16 +269,30 @@ static void *do_sel4_virtio(void *opaque)
     return NULL;
 }
 
-static bool ioeventfd_exists(MemoryRegionSection *section, EventNotifier *e)
+static int sel4_ioeventfd_set(SeL4State *s, int fd, hwaddr addr, uint32_t val,
+                              bool assign, uint32_t size, bool datamatch)
 {
-    for (int i = 0; i < nlrs; i++) {
-        if (lrs[i].offset_within_address_space == section->offset_within_address_space &&
-            lrs[i].size == section->size &&
-            lrs[i].n == e) {
-            return true;
-        }
+    struct sel4_ioeventfd_config config = {
+        .fd = fd,
+        .addr = addr,
+        .len = size,
+        .data = datamatch ? val : 0,
+        .flags = 0,
+    };
+
+    if (datamatch) {
+        config.flags |= SEL4_IOEVENTFD_FLAG_DATAMATCH;
     }
-    return false;
+
+    if (!assign) {
+        config.flags |= SEL4_IOEVENTFD_FLAG_DEASSIGN;
+    }
+
+    if (sel4_vm_ioctl(s, SEL4_IOEVENTFD, &config) < 0) {
+        return -errno;
+    }
+
+    return 0;
 }
 
 static void sel4_io_ioeventfd_add(MemoryListener *listener,
@@ -333,18 +300,18 @@ static void sel4_io_ioeventfd_add(MemoryListener *listener,
                                   bool match_data, uint64_t data,
                                   EventNotifier *e)
 {
-    if (ioeventfd_exists(section, e)) {
-        return;
+    SeL4State *s = container_of(listener, SeL4State, mem_listener);
+    int fd = event_notifier_get_fd(e);
+    int rc;
+
+    rc = sel4_ioeventfd_set(s, fd, section->offset_within_address_space,
+                            data, true, int128_get64(section->size),
+                            match_data);
+    if (rc < 0) {
+        fprintf(stderr, "%s: error adding ioeventfd: %s (%d)\n",
+                __func__, strerror(-rc), -rc);
+        abort();
     }
-
-    sel4_listener_region_t *lr = &lrs[nlrs++];
-
-    tii_printf("%s: mr=%p offset=0x%"PRIx64" size=0x%"PRIx64" notifier=%p\n", __func__, section->mr,
-               section->offset_within_address_space, int128_get64(section->size), e);
-
-    lr->offset_within_address_space = section->offset_within_address_space;
-    lr->size = section->size;
-    lr->n = e;
 }
 
 static void sel4_io_ioeventfd_del(MemoryListener *listener,
@@ -353,7 +320,18 @@ static void sel4_io_ioeventfd_del(MemoryListener *listener,
                                  EventNotifier *e)
 
 {
-    tii_printf("WARNING: %s UNIMPLEMENTED\n", __func__);
+    SeL4State *s = container_of(listener, SeL4State, mem_listener);
+    int fd = event_notifier_get_fd(e);
+    int rc;
+
+    rc = sel4_ioeventfd_set(s, fd, section->offset_within_address_space,
+                            data, false, int128_get64(section->size),
+                            match_data);
+    if (rc < 0) {
+        fprintf(stderr, "%s: error deleting ioeventfd: %s (%d)\n",
+                __func__, strerror(-rc), -rc);
+        abort();
+    }
 }
 
 static void sel4_region_add(MemoryListener *listener, MemoryRegionSection *section)
@@ -374,13 +352,6 @@ static void sel4_region_del(MemoryListener *listener, MemoryRegionSection *secti
 {
     tii_printf("WARNING: %s entered, but no real implementation\n", __func__);
 }
-
-static MemoryListener sel4_io_listener = {
-    .eventfd_add = sel4_io_ioeventfd_add,
-    .eventfd_del = sel4_io_ioeventfd_del,
-    .region_add = sel4_region_add,
-    .region_del = sel4_region_del,
-};
 
 static int sel4_init(MachineState *ms)
 {
@@ -441,7 +412,12 @@ static int sel4_init(MachineState *ms)
         goto err;
     }
 
-    memory_listener_register(&sel4_io_listener, &address_space_memory);
+    s->mem_listener.eventfd_add = sel4_io_ioeventfd_add;
+    s->mem_listener.eventfd_del = sel4_io_ioeventfd_del;
+    s->mem_listener.region_add = sel4_region_add;
+    s->mem_listener.region_del = sel4_region_del;
+
+    memory_listener_register(&s->mem_listener, &address_space_memory);
 
     qemu_add_vm_change_state_handler(sel4_change_state_handler, s);
 
