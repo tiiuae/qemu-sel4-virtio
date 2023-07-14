@@ -188,41 +188,41 @@ static void sel4_change_state_handler(void *opaque, bool running, RunState state
     }
 }
 
-static void sel4_mmio_do_io(struct sel4_ioreq_mmio *mmio)
+static void sel4_mmio_do_io(struct sel4_ioreq *ioreq)
 {
     qemu_mutex_lock_iothread();
-    switch (mmio->direction) {
+    switch (ioreq->direction) {
     case SEL4_IO_DIR_WRITE:
-        address_space_write(&address_space_memory, mmio->addr, MEMTXATTRS_UNSPECIFIED, &mmio->data, mmio->len);
+        address_space_write(&address_space_memory, ioreq->addr, MEMTXATTRS_UNSPECIFIED, &ioreq->data, ioreq->len);
         break;
     case SEL4_IO_DIR_READ:
-        address_space_read(&address_space_memory, mmio->addr, MEMTXATTRS_UNSPECIFIED, &mmio->data, mmio->len);
+        address_space_read(&address_space_memory, ioreq->addr, MEMTXATTRS_UNSPECIFIED, &ioreq->data, ioreq->len);
         break;
     default:
-        error_report("sel4: invalid mmio direction (%d)", mmio->direction);
+        error_report("sel4: invalid ioreq direction (%d)", ioreq->direction);
         break;
     }
     qemu_mutex_unlock_iothread();
 }
 
-static void sel4_pci_do_io(struct sel4_ioreq_pci *pci)
+static void sel4_pci_do_io(struct sel4_ioreq *ioreq)
 {
-    PCIDevice *dev = pci_devs[pci->pcidev];
-    uint32_t val;
+    PCIDevice *dev = pci_devs[ioreq->addr_space];
+    uint64_t val;
 
     qemu_mutex_lock_iothread();
-    switch (pci->direction) {
+    switch (ioreq->direction) {
     case SEL4_IO_DIR_WRITE:
         val = 0;
-        memcpy(&val, &pci->data, pci->len);
-        dev->config_write(dev, pci->addr, val, pci->len);
+        memcpy(&val, &ioreq->data, ioreq->len);
+        dev->config_write(dev, ioreq->addr, val, ioreq->len);
         break;
     case SEL4_IO_DIR_READ:
-        val = dev->config_read(dev, pci->addr, pci->len);
-        memcpy(&pci->data, &val, pci->len);
+        val = dev->config_read(dev, ioreq->addr, ioreq->len);
+        memcpy(&ioreq->data, &val, ioreq->len);
         break;
     default:
-        error_report("sel4: invalid pci direction (%d)", pci->direction);
+        error_report("sel4: invalid ioreq direction (%d)", ioreq->direction);
         break;
     }
     qemu_mutex_unlock_iothread();
@@ -236,16 +236,10 @@ static inline void handle_ioreq(SeL4State *s)
     for (slot = 0; slot < SEL4_MAX_IOREQS; slot++) {
         ioreq = &s->ioreq_buffer->request_slots[slot];
         if (qatomic_load_acquire(&ioreq->state) == SEL4_IOREQ_STATE_PROCESSING) {
-            switch (ioreq->type) {
-            case SEL4_IOREQ_TYPE_MMIO:
-                sel4_mmio_do_io(&ioreq->req.mmio);
-                break;
-            case SEL4_IOREQ_TYPE_PCI:
-                sel4_pci_do_io(&ioreq->req.pci);
-                break;
-            default:
-                fprintf(stderr, "sel4: unknown ioreq type (%"PRIu32")", ioreq->type);
-                break;
+            if (ioreq->addr_space == AS_GLOBAL) {
+                sel4_mmio_do_io(ioreq);
+            } else {
+                sel4_pci_do_io(ioreq);
             }
 
             sel4_vm_ioctl(s, SEL4_NOTIFY_IO_HANDLED, slot);
