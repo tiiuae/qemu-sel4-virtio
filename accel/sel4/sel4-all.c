@@ -12,6 +12,7 @@
 #include "qemu/atomic.h"
 #include "sysemu/cpus.h"
 #include "sysemu/runstate.h"
+#include "sysemu/sel4.h"
 #include "hw/boards.h"
 #include "hw/pci/pci.h"
 #include "hw/pci/pci_bus.h"
@@ -37,10 +38,6 @@ void sel4_register_pci_device(PCIDevice *d);
 static QemuThread sel4_virtio_thread;
 
 static void *do_sel4_virtio(void *opaque);
-
-/* FIXME: we might need to create interrupt controller for seL4 for
- * qemu_set_irq to call. */
-void sel4_set_irq(unsigned int irq, bool);
 
 typedef struct SeL4State
 {
