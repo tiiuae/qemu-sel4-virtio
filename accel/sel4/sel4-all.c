@@ -12,6 +12,7 @@
 #include "qemu/atomic.h"
 #include "sysemu/cpus.h"
 #include "sysemu/runstate.h"
+#include "sysemu/sel4.h"
 #include "hw/boards.h"
 #include "hw/pci/pci.h"
 #include "hw/pci/pci_bus.h"
@@ -39,10 +40,6 @@ static QemuThread sel4_virtio_thread;
 
 static void *do_sel4_virtio(void *opaque);
 
-/* FIXME: we might need to create interrupt controller for seL4 for
- * qemu_set_irq to call. */
-void sel4_set_irq(unsigned int irq, bool);
-
 typedef struct SeL4State
 {
     AccelState parent_obj;
@@ -52,7 +49,7 @@ typedef struct SeL4State
     int ioreqfd;
     struct sel4_iohandler_buffer *ioreq_buffer;
     MemoryListener mem_listener;
-} SeL4State ;
+} SeL4State;
 
 #define TYPE_SEL4_ACCEL ACCEL_CLASS_NAME("sel4")
 
@@ -117,22 +114,7 @@ void tii_printf(const char *fmt, ...)
 }
 
 static unsigned int pci_dev_count;
-static PCIDevice *pci_devs[16];
-static uintptr_t pci_base[16];
-static unsigned int pci_base_count;
-
-static int pci_resolve_irq(PCIDevice *pci_dev, int irq_num)
-{
-    PCIBus *bus;
-    for (;;) {
-        bus = pci_get_bus(pci_dev);
-        irq_num = bus->map_irq(pci_dev, irq_num);
-        if (bus->set_irq)
-            break;
-        pci_dev = bus->parent_dev;
-    }
-    return irq_num;
-}
+static PCIDevice *pci_devs[SEL4_VPCI_INTERRUPTS];
 
 static inline bool using_sel4(void)
 {
@@ -158,9 +140,6 @@ void sel4_register_pci_device(PCIDevice *d)
     }
 
     pci_dev_count++;
-
-    // INTX = 1 -> IRQ 0
-    printf("IRQ for this device is %d\n", pci_resolve_irq(d, 0));
 }
 
 void sel4_set_irq(unsigned int irq, bool state)
@@ -334,13 +313,6 @@ static void sel4_region_add(MemoryListener *listener, MemoryRegionSection *secti
     tii_printf("%s entered, region name %s, offset within region 0x%lx, size 0x%lx\n", __func__,
                memory_region_name(section->mr), (uint64_t) section->offset_within_address_space,
                (uint64_t) section->size);
-
-    if (!strcmp(memory_region_name(section->mr), "virtio-pci")) {
-        pci_base[pci_base_count] = section->offset_within_address_space;
-        tii_printf("translating accesses to PCI device %d to offset %"PRIxPTR"\n", pci_base_count,
-                   pci_base[pci_base_count]);
-        pci_base_count++;
-    }
 }
 
 static void sel4_region_del(MemoryListener *listener, MemoryRegionSection *section)
