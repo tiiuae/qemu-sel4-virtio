@@ -50,6 +50,7 @@
 #include "sysemu/kvm.h"
 #include "sysemu/hvf.h"
 #include "sysemu/qtest.h"
+#include "sysemu/sel4.h"
 #include "hw/loader.h"
 #include "qapi/error.h"
 #include "qemu/bitops.h"
@@ -857,6 +858,16 @@ static void create_gic(VirtMachineState *vms, MemoryRegion *mem)
     } else if (vms->gic_version == VIRT_GIC_VERSION_2) {
         create_v2m(vms);
     }
+}
+
+static void create_sel4_intc(VirtMachineState *vms)
+{
+    vms->gic = qdev_new("sel4-intc");
+    qdev_prop_set_uint32(vms->gic, "num-irqs", NUM_IRQS);
+    sysbus_realize_and_unref(SYS_BUS_DEVICE(vms->gic), &error_fatal);
+
+    fdt_add_gic_node(vms);
+    create_v2m(vms);
 }
 
 static void create_uart(const VirtMachineState *vms, int uart,
@@ -2273,7 +2284,11 @@ static void machvirt_init(MachineState *machine)
 
     virt_flash_fdt(vms, sysmem, secure_sysmem ?: sysmem);
 
-    create_gic(vms, sysmem);
+    if (!sel4_enabled()) {
+        create_gic(vms, sysmem);
+    } else {
+        create_sel4_intc(vms);
+    }
 
     virt_cpu_post_init(vms, sysmem);
 
