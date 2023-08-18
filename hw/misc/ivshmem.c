@@ -27,6 +27,7 @@
 #include "hw/pci/msi.h"
 #include "hw/pci/msix.h"
 #include "sysemu/kvm.h"
+#include "sysemu/sel4.h"
 #include "migration/blocker.h"
 #include "migration/vmstate.h"
 #include "qemu/error-report.h"
@@ -832,7 +833,9 @@ static void ivshmem_write_config(PCIDevice *pdev, uint32_t address,
     }
 }
 
+#ifdef CONFIG_SEL4_PCI
 void sel4_register_pci_device(PCIDevice *d);
+#endif
 
 static void ivshmem_common_realize(PCIDevice *dev, Error **errp)
 {
@@ -918,7 +921,9 @@ static void ivshmem_common_realize(PCIDevice *dev, Error **errp)
                      PCI_BASE_ADDRESS_MEM_TYPE_64,
                      s->ivshmem_bar2);
 
+#ifdef CONFIG_SEL4_PCI
     sel4_register_pci_device(PCI_DEVICE(s));
+#endif
 }
 
 static void ivshmem_exit(PCIDevice *dev)

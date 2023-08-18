@@ -11,6 +11,8 @@
 #ifdef NEED_CPU_H
 # ifdef CONFIG_SEL4
 #  define CONFIG_SEL4_IS_POSSIBLE
+/* Uncomment to use PCI bus from seL4 instead of qemu */
+// #  define CONFIG_SEL4_PCI
 # endif
 #else
 # define CONFIG_SEL4_IS_POSSIBLE

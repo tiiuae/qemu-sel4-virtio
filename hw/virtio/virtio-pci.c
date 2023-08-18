@@ -33,6 +33,7 @@
 #include "hw/pci/msix.h"
 #include "hw/loader.h"
 #include "sysemu/kvm.h"
+#include "sysemu/sel4.h"
 #include "hw/virtio/virtio-pci.h"
 #include "qemu/range.h"
 #include "hw/virtio/virtio-bus.h"
@@ -1621,7 +1622,9 @@ static void virtio_pci_pre_plugged(DeviceState *d, Error **errp)
     virtio_add_feature(&vdev->host_features, VIRTIO_F_BAD_FEATURE);
 }
 
+#ifdef CONFIG_SEL4_PCI
 void sel4_register_pci_device(PCIDevice *d);
+#endif
 
 /* This is called by virtio-bus just after the device is plugged. */
 static void virtio_pci_device_plugged(DeviceState *d, Error **errp)
@@ -1764,7 +1767,9 @@ static void virtio_pci_device_plugged(DeviceState *d, Error **errp)
     proxy->pci_dev.config_write = virtio_write_config;
     proxy->pci_dev.config_read = virtio_read_config;
 
+#ifdef CONFIG_SEL4_PCI
     sel4_register_pci_device(&proxy->pci_dev);
+#endif
 
     if (legacy) {
         size = VIRTIO_PCI_REGION_SIZE(&proxy->pci_dev)

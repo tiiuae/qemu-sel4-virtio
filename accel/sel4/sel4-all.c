@@ -10,6 +10,7 @@
 #include "qapi/error.h"
 #include "qemu/accel.h"
 #include "qemu/atomic.h"
+#include "qemu/range.h"
 #include "sysemu/cpus.h"
 #include "sysemu/runstate.h"
 #include "sysemu/sel4.h"
@@ -53,6 +54,28 @@ typedef struct SeL4State
 #define TYPE_SEL4_ACCEL ACCEL_CLASS_NAME("sel4")
 
 DECLARE_INSTANCE_CHECKER(SeL4State, SEL4_STATE, TYPE_SEL4_ACCEL)
+
+typedef struct SeL4MmioRegion {
+    hwaddr start_addr;
+    Int128 size;
+    QLIST_ENTRY(SeL4MmioRegion) list;
+} SeL4MmioRegion;
+
+static QLIST_HEAD(, SeL4MmioRegion) mmio_regions = QLIST_HEAD_INITIALIZER(mmio_regions);
+
+static QemuMutex sel4_mmio_regions_lock;
+#define sel4_regions_lock()    qemu_mutex_lock(&sel4_mmio_regions_lock)
+#define sel4_regions_unlock()  qemu_mutex_unlock(&sel4_mmio_regions_lock)
+
+// FIXME: HACKERY
+const char *allowed_regions[] = {
+    "gicv2m",
+#ifndef CONFIG_SEL4_PCI
+    "gpex_mmio_window",
+    "pcie-mmcfg-mmio",
+    "gpex_ioport_window"
+#endif
+};
 
 static int sel4_ioctl(SeL4State *s, int type, ...)
 {
@@ -321,18 +344,96 @@ static void sel4_io_ioeventfd_del(MemoryListener *listener,
     }
 }
 
+static int sel4_set_mmio_region(MemoryListener *listener,
+                                MemoryRegionSection *section, bool set)
+{
+    SeL4State *s = container_of(listener, SeL4State, mem_listener);
+    struct sel4_mmio_region_config config = {
+        .gpa = section->offset_within_address_space,
+        .len = int128_get64(section->size),
+        .flags = set ? 0 : SEL4_MMIO_REGION_UNSET,
+    };
+
+    if (memory_region_is_ram(section->mr)) {
+        return -1;
+    }
+
+    if (sel4_vm_ioctl(s, SEL4_SET_MMIO_REGION, &config) < 0) {
+        return -errno;
+    }
+
+    return 0;
+}
+
+static int sel4_mmio_region_add(MemoryListener *listener,
+                                MemoryRegionSection *section)
+{
+    SeL4MmioRegion *entry;
+    int rc = 0;
+
+    sel4_regions_lock();
+    QLIST_FOREACH(entry, &mmio_regions, list) {
+        if (ranges_overlap(entry->start_addr, int128_get64(entry->size),
+                           section->offset_within_address_space,
+                           int128_get64(section->size))) {
+            /* Already registered */
+            goto unlock;
+        }
+    }
+
+    rc = sel4_set_mmio_region(listener, section, true);
+    if (rc) {
+        fprintf(stderr, "%s: mmio region register failed: %d\n",
+                __func__, rc);
+        goto unlock;
+    }
+
+    entry = g_new0(SeL4MmioRegion, 1);
+    if (!entry) {
+        fprintf(stderr, "%s: entry allocation failed\n", __func__);
+        rc = -ENOMEM;
+        goto unlock;
+    }
+    entry->start_addr = section->offset_within_address_space;
+    entry->size = section->size;
+
+    QLIST_INSERT_HEAD(&mmio_regions, entry, list);
+
+unlock:
+    sel4_regions_unlock();
+
+    return rc;
+}
+
+static bool sel4_is_allowed_region(char const * const region_name)
+{
+    for (unsigned i = 0; i < ARRAY_SIZE(allowed_regions); i++) {
+        if (!strcmp(region_name, allowed_regions[i]))
+            return true;
+    }
+    return false;
+}
+
 static void sel4_region_add(MemoryListener *listener, MemoryRegionSection *section)
 {
-    tii_printf("%s entered, region name %s, offset within region 0x%lx, size 0x%lx\n", __func__,
-               memory_region_name(section->mr), (uint64_t) section->offset_within_address_space,
+    tii_printf("%s entered, region name %s, offset within address space 0x%lx, size 0x%lx\n",
+               __func__, memory_region_name(section->mr),
+               (uint64_t) section->offset_within_address_space,
                (uint64_t) section->size);
 
+
+    // FIXME: Perhaps device listener to match SYS_BUS_DEVICEs...?
+    if (sel4_is_allowed_region(memory_region_name(section->mr))) {
+        sel4_mmio_region_add(listener, section);
     }
 }
 
 static void sel4_region_del(MemoryListener *listener, MemoryRegionSection *section)
 {
-    tii_printf("WARNING: %s entered, but no real implementation\n", __func__);
+    tii_printf("%s entered, region name %s, offset within address space 0x%lx, size 0x%lx\n",
+               __func__, memory_region_name(section->mr),
+               (uint64_t) section->offset_within_address_space,
+               (uint64_t) section->size);
 }
 
 static int sel4_init(MachineState *ms)
@@ -399,6 +500,7 @@ static int sel4_init(MachineState *ms)
     s->mem_listener.region_add = sel4_region_add;
     s->mem_listener.region_del = sel4_region_del;
 
+
     memory_listener_register(&s->mem_listener, &address_space_memory);
 
     qemu_add_vm_change_state_handler(sel4_change_state_handler, s);
@@ -456,6 +558,10 @@ static int parse_kernel_bootargs(void)
             goto close_fp;
         }
         if (id == vmid) {
+// FIXME: HACKERY
+#ifndef CONFIG_SEL4_PCI
+            uservm_pcie_mmio_base += uservm_pcie_mmio_size;
+#endif
             ret = 0;
             break;
         }
@@ -525,12 +631,35 @@ static void sel4_accel_instance_init(Object *obj)
     s->ioreq_buffer = NULL;
 
     virt_memmap_customize = sel4_memmap_customize;
+
+    qemu_mutex_init(&sel4_mmio_regions_lock);
+}
+
+static void sel4_accel_instance_finalize(Object *obj)
+{
+    SeL4State *s = SEL4_STATE(obj);
+    SeL4MmioRegion *entry, *tmp;
+
+    sel4_regions_lock();
+    QLIST_FOREACH_SAFE(entry, &mmio_regions, list, tmp) {
+        struct sel4_mmio_region_config config = {
+            .gpa = entry->start_addr,
+            .len = int128_get64(entry->size),
+            .flags = SEL4_MMIO_REGION_UNSET,
+        };
+
+        QLIST_REMOVE(entry, list);
+        sel4_vm_ioctl(s, SEL4_SET_MMIO_REGION, &config);
+        g_free(entry);
+    }
+    sel4_regions_unlock();
 }
 
 static const TypeInfo sel4_accel_type = {
     .name = TYPE_SEL4_ACCEL,
     .parent = TYPE_ACCEL,
     .instance_init = sel4_accel_instance_init,
+    .instance_finalize = sel4_accel_instance_finalize,
     .class_init = sel4_accel_class_init,
     .instance_size = sizeof(SeL4State),
 };

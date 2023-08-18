@@ -2253,7 +2253,7 @@ static void machvirt_init(MachineState *machine)
         create_tag_ram(tag_sysmem, vms->memmap[VIRT_MEM].base,
                        machine->ram_size, "mach-virt.tag");
     }
-
+    vms->highmem_ecam &= !sel4_enabled();
     vms->highmem_ecam &= (!firmware_loaded || aarch64);
 
     create_rtc(vms);
