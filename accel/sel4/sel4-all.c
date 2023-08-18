@@ -88,8 +88,6 @@ static int sel4_vm_ioctl(SeL4State *s, int type, ...)
     return ret;
 }
 
-void seL4_Yield(void){}
-
 static void sel4_setup_post(MachineState *ms, AccelState *accel)
 {
     SeL4State *s = SEL4_STATE(ms->accelerator);
@@ -114,8 +112,6 @@ void tii_printf(const char *fmt, ...)
 
 static unsigned int pci_dev_count;
 static PCIDevice *pci_devs[16];
-static uintptr_t pci_base[16];
-static unsigned int pci_base_count;
 
 static int pci_resolve_irq(PCIDevice *pci_dev, int irq_num)
 {
@@ -331,11 +327,6 @@ static void sel4_region_add(MemoryListener *listener, MemoryRegionSection *secti
                memory_region_name(section->mr), (uint64_t) section->offset_within_address_space,
                (uint64_t) section->size);
 
-    if (!strcmp(memory_region_name(section->mr), "virtio-pci")) {
-        pci_base[pci_base_count] = section->offset_within_address_space;
-        tii_printf("translating accesses to PCI device %d to offset %"PRIxPTR"\n", pci_base_count,
-                   pci_base[pci_base_count]);
-        pci_base_count++;
     }
 }
 
