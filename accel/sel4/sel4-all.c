@@ -29,6 +29,7 @@ static MemMapEntry sel4_memmap_customize(const MemMapEntry *base_memmap, int i);
 
 void tii_printf(const char *fmt, ...);
 
+static int vmid = 1;
 static MemoryRegion ram_mr;
 bool sel4_allowed;
 
@@ -353,9 +354,16 @@ static int sel4_init(MachineState *ms)
     SeL4State *s = SEL4_STATE(ms->accelerator);
     int rc;
     struct sel4_vm_params params = {
+        .id = 1,
         .ram_size = ms->ram_size,
     };
     void *ram = NULL;
+
+    char *p = getenv("VMID");
+    if (p) {
+        vmid = atoi(p);
+    }
+    params.id = vmid;
 
     s->fd = open("/dev/sel4", O_RDWR);
     if (s->fd == -1) {
@@ -433,7 +441,7 @@ err:
     return rc;
 }
 
-static const int vmid = 1;
+
 static unsigned long uservm_ram_base;
 static unsigned long uservm_ram_size;
 static unsigned long uservm_pcie_mmio_base;
@@ -472,6 +480,10 @@ static int parse_kernel_bootargs(void)
             break;
         }
     }
+
+    fprintf(stderr, "User VM %d, shared RAM %zu bytes at 0x%"PRIxPTR", PCI MMIO %zu bytes at 0x%"PRIxPTR"\n",
+            id, uservm_ram_size, uservm_ram_base,
+            uservm_pcie_mmio_size, uservm_pcie_mmio_base);
 
 close_fp:
     fclose(fp);
