@@ -33,6 +33,9 @@ void tii_printf(const char *fmt, ...);
 
 static MemoryRegion ram_mr;
 bool sel4_allowed;
+bool sel4_irqfds_allowed;
+bool sel4_resamplefds_allowed;
+bool sel4_msi_via_irqfd_allowed;
 
 void sel4_register_pci_device(PCIDevice *d);
 
@@ -436,6 +439,62 @@ static void sel4_region_del(MemoryListener *listener, MemoryRegionSection *secti
                (uint64_t) section->size);
 }
 
+#include "hw/pci/msi.h"
+#include "hw/pci/msix.h"
+
+int sel4_add_msi_route(int vector, PCIDevice *dev)
+{
+    MSIMessage msg = {0, 0};
+    if (pci_available && dev) {
+        msg = pci_get_msi_message(dev, vector);
+    }
+
+    // direct gsi mapping
+    return msg.data;
+}
+
+static int sel4_assign_irqfd(SeL4State *s, EventNotifier *event,
+                             EventNotifier *resample, int virq,
+                             bool assign)
+{
+    int fd = event_notifier_get_fd(event);
+    int rfd = resample ? event_notifier_get_fd(resample) : -1;
+
+    struct sel4_irqfd_config irqfd = {
+        .fd = fd,
+        .virq = virq,
+        .flags = assign ? 0 : SEL4_IRQFD_FLAG_DEASSIGN,
+    };
+
+    if (rfd != -1) {
+        assert(assign);
+        error_report("sel4: irqfd resamplefd not supported");
+    }
+
+    if (!sel4_irqfds_enabled()) {
+        return -ENOSYS;
+    }
+
+    fprintf(stderr, "sel4: IRQFD %s %d\n", assign ? "ASSIGN" : "DEASSIGN", irqfd.virq);
+    int err = sel4_vm_ioctl(s, SEL4_IRQFD, &irqfd);
+    if (err) {
+        fprintf(stderr, "sel4: IRQFD RET %d\n", err);
+    }
+    return err;
+}
+
+int sel4_add_irqfd_notifier(EventNotifier *n, EventNotifier *rn, int virq)
+{
+    SeL4State *s = SEL4_STATE(current_accel());
+    return sel4_assign_irqfd(s, n, rn, virq, true);
+}
+
+int sel4_remove_irqfd_notifier(EventNotifier *n, int virq)
+{
+    SeL4State *s = SEL4_STATE(current_accel());
+    return sel4_assign_irqfd(s, n, NULL, virq, false);
+}
+
 static int sel4_init(MachineState *ms)
 {
     MachineClass *mc = MACHINE_GET_CLASS(ms);
@@ -494,14 +553,14 @@ static int sel4_init(MachineState *ms)
         fprintf(stderr, "sel4: iohandler mmap failed %m\n");
         goto err;
     }
-
     s->mem_listener.eventfd_add = sel4_io_ioeventfd_add;
     s->mem_listener.eventfd_del = sel4_io_ioeventfd_del;
     s->mem_listener.region_add = sel4_region_add;
     s->mem_listener.region_del = sel4_region_del;
 
-
     memory_listener_register(&s->mem_listener, &address_space_memory);
+
+    sel4_irqfds_allowed = true;
 
     qemu_add_vm_change_state_handler(sel4_change_state_handler, s);
 
