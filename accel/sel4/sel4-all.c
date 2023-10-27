@@ -170,18 +170,24 @@ void sel4_register_pci_device(PCIDevice *d)
 
 void sel4_set_irq(unsigned int irq, bool state)
 {
+    int err;
+
     if (!using_sel4()) {
         return;
     }
 
     SeL4State *s = SEL4_STATE(current_accel());
-    struct sel4_irqline irqline = {
-        .irq = irq,
-        .op = state ? SEL4_IRQ_OP_SET : SEL4_IRQ_OP_CLR,
-    };
 
-    if (sel4_vm_ioctl(s, SEL4_SET_IRQLINE, &irqline))
-        fprintf(stderr, "Failed to set irq: %m\n");
+    if (state) {
+        err = sel4_rpc_doorbell(driver_req_set_irqline(&s->rpc, irq));
+    } else {
+        err = sel4_rpc_doorbell(driver_req_clear_irqline(&s->rpc, irq));
+    }
+
+    if (err) {
+        fprintf(stderr, "Failed to set IRQ %u\n", irq);
+        exit(1);
+    }
 }
 
 static void sel4_change_state_handler(void *opaque, bool running, RunState state)
