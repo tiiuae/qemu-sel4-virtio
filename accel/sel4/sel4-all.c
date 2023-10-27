@@ -126,19 +126,6 @@ static PCIDevice *pci_devs[PCI_NUM_SLOTS];
 static uintptr_t pci_base[16];
 static unsigned int pci_base_count;
 
-static int pci_resolve_irq(PCIDevice *pci_dev, int irq_num)
-{
-    PCIBus *bus;
-    for (;;) {
-        bus = pci_get_bus(pci_dev);
-        irq_num = bus->map_irq(pci_dev, irq_num);
-        if (bus->set_irq)
-            break;
-        pci_dev = bus->parent_dev;
-    }
-    return irq_num;
-}
-
 bool using_sel4(void)
 {
     return virt_memmap_customize == sel4_memmap_customize;
@@ -163,9 +150,6 @@ void sel4_register_pci_device(PCIDevice *d)
     if (sel4_vm_ioctl(s, SEL4_CREATE_VPCI_DEVICE, &vpcidev)) {
         fprintf(stderr, "Failed to register PCI device: %m\n");
     }
-
-    // INTX = 1 -> IRQ 0
-    printf("IRQ for this device is %d\n", pci_resolve_irq(d, 0));
 }
 
 void sel4_set_irq(unsigned int irq, bool state)

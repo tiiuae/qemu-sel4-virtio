@@ -36,12 +36,11 @@
 #include "hw/qdev-properties.h"
 #include "migration/vmstate.h"
 #include "qemu/module.h"
+#include "sysemu/sel4.h"
 
 /****************************************************************************
  * GPEX host
  */
-
-void sel4_set_irq(unsigned int irq, bool);
 
 static void gpex_set_irq(void *opaque, int irq_num, int level)
 {
@@ -76,6 +75,19 @@ static PCIINTxRoute gpex_route_intx_pin_to_irq(void *opaque, int pin)
     }
 
     return route;
+}
+
+/*
+ * 0 <= pin <= 3 0 = INTA, 1 = INTB, 2 = INTC, 3 = INTD
+ * 0-origin unlike PCI interrupt pin register.
+ */
+int sel4_pci_swizzle_map_irq_fn(PCIDevice *pci_dev, int pin)
+{
+    if (!using_sel4()) {
+        return pci_swizzle(PCI_SLOT(pci_dev->devfn), pin);
+    }
+
+    return 4 * PCI_SLOT(pci_dev->devfn) + pin;
 }
 
 static void gpex_host_realize(DeviceState *dev, Error **errp)
@@ -138,7 +150,7 @@ static void gpex_host_realize(DeviceState *dev, Error **errp)
     }
 
     pci->bus = pci_register_root_bus(dev, "pcie.0", gpex_set_irq,
-                                     pci_swizzle_map_irq_fn, s, &s->io_mmio,
+                                     sel4_pci_swizzle_map_irq_fn, s, &s->io_mmio,
                                      &s->io_ioport, 0, 4, TYPE_PCIE_BUS);
 
     pci_bus_set_route_irq_fn(pci->bus, gpex_route_intx_pin_to_irq);
