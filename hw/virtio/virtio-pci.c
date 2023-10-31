@@ -1621,8 +1621,6 @@ static void virtio_pci_pre_plugged(DeviceState *d, Error **errp)
     virtio_add_feature(&vdev->host_features, VIRTIO_F_BAD_FEATURE);
 }
 
-void sel4_register_pci_device(PCIDevice *d);
-
 /* This is called by virtio-bus just after the device is plugged. */
 static void virtio_pci_device_plugged(DeviceState *d, Error **errp)
 {
@@ -1764,8 +1762,6 @@ static void virtio_pci_device_plugged(DeviceState *d, Error **errp)
     proxy->pci_dev.config_write = virtio_write_config;
     proxy->pci_dev.config_read = virtio_read_config;
 
-    sel4_register_pci_device(&proxy->pci_dev);
-
     if (legacy) {
         size = VIRTIO_PCI_REGION_SIZE(&proxy->pci_dev)
             + virtio_bus_get_vdev_config_len(bus);
@@ -1778,6 +1774,17 @@ static void virtio_pci_device_plugged(DeviceState *d, Error **errp)
         pci_register_bar(&proxy->pci_dev, proxy->legacy_io_bar_idx,
                          PCI_BASE_ADDRESS_SPACE_IO, &proxy->bar);
     }
+}
+
+void sel4_register_pci_device(PCIDevice *d);
+
+static void sel4_virtio_pci_device_plugged(DeviceState *d, Error **errp)
+{
+    VirtIOPCIProxy *proxy = VIRTIO_PCI(d);
+
+    virtio_pci_device_plugged(d, errp);
+
+    sel4_register_pci_device(&proxy->pci_dev);
 }
 
 static void virtio_pci_device_unplugged(DeviceState *d)
@@ -2226,7 +2233,7 @@ static void virtio_pci_bus_class_init(ObjectClass *klass, void *data)
     k->set_host_notifier_mr = virtio_pci_set_host_notifier_mr;
     k->vmstate_change = virtio_pci_vmstate_change;
     k->pre_plugged = virtio_pci_pre_plugged;
-    k->device_plugged = virtio_pci_device_plugged;
+    k->device_plugged = sel4_virtio_pci_device_plugged;
     k->device_unplugged = virtio_pci_device_unplugged;
     k->query_nvectors = virtio_pci_query_nvectors;
     k->ioeventfd_enabled = virtio_pci_ioeventfd_enabled;
