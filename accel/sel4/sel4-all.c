@@ -12,6 +12,7 @@
 #include "qemu/atomic.h"
 #include "sysemu/cpus.h"
 #include "sysemu/runstate.h"
+#include "sysemu/sel4.h"
 #include "hw/boards.h"
 #include "hw/pci/pci.h"
 #include "hw/pci/pci_bus.h"
@@ -134,7 +135,7 @@ static int pci_resolve_irq(PCIDevice *pci_dev, int irq_num)
     return irq_num;
 }
 
-static inline bool using_sel4(void)
+bool using_sel4(void)
 {
     return virt_memmap_customize == sel4_memmap_customize;
 }
