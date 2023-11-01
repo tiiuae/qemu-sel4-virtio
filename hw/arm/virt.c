@@ -109,7 +109,7 @@
 
 
 /* Number of external interrupt lines to configure the GIC with */
-#define NUM_IRQS 256
+#define NUM_IRQS 512
 
 #define PLATFORM_BUS_NUM_IRQS 64
 
@@ -186,7 +186,7 @@ static MemMapEntry extended_memmap[] = {
 static const int a15irqmap[] = {
     [VIRT_UART] = 1,
     [VIRT_RTC] = 2,
-    [VIRT_PCIE] = 3, /* ... to 6 */
+    [VIRT_PCIE] = 176, /* ... to 6 */
     [VIRT_GPIO] = 7,
     [VIRT_SECURE_UART] = 8,
     [VIRT_ACPI_GED] = 9,

@@ -12,6 +12,7 @@
 #include "qemu/atomic.h"
 #include "sysemu/cpus.h"
 #include "sysemu/runstate.h"
+#include "sysemu/sel4.h"
 #include "hw/boards.h"
 #include "hw/pci/pci.h"
 #include "hw/pci/pci_bus.h"
@@ -22,6 +23,10 @@
 #include <stdarg.h>
 #include <sys/ioctl.h>
 #include <sel4/sel4_virt.h>
+
+#define PCI_NUM_SLOTS   (32)
+
+#define EVENT_BAR_EMIT_REGISTER 0x0
 
 extern MemMapEntry (*virt_memmap_customize)(const MemMapEntry *base_memmap, int i);
 
@@ -50,7 +55,10 @@ typedef struct SeL4State
     int fd;
     int vmfd;
     int ioreqfd;
-    struct sel4_iohandler_buffer *ioreq_buffer;
+    int event_bar_fd;
+    void *iobuf;
+    void *event_bar;
+    sel4_rpc_t rpc;
     MemoryListener mem_listener;
 } SeL4State ;
 
@@ -92,8 +100,6 @@ static int sel4_vm_ioctl(SeL4State *s, int type, ...)
     return ret;
 }
 
-void seL4_Yield(void){}
-
 static void sel4_setup_post(MachineState *ms, AccelState *accel)
 {
     SeL4State *s = SEL4_STATE(ms->accelerator);
@@ -116,25 +122,11 @@ void tii_printf(const char *fmt, ...)
     qmp_ringbuf_write("debug", tmp, false, 0, &err);
 }
 
-static unsigned int pci_dev_count;
-static PCIDevice *pci_devs[16];
+static PCIDevice *pci_devs[PCI_NUM_SLOTS];
 static uintptr_t pci_base[16];
 static unsigned int pci_base_count;
 
-static int pci_resolve_irq(PCIDevice *pci_dev, int irq_num)
-{
-    PCIBus *bus;
-    for (;;) {
-        bus = pci_get_bus(pci_dev);
-        irq_num = bus->map_irq(pci_dev, irq_num);
-        if (bus->set_irq)
-            break;
-        pci_dev = bus->parent_dev;
-    }
-    return irq_num;
-}
-
-static inline bool using_sel4(void)
+bool using_sel4(void)
 {
     return virt_memmap_customize == sel4_memmap_customize;
 }
@@ -145,38 +137,41 @@ void sel4_register_pci_device(PCIDevice *d)
         return;
     }
 
+    unsigned int slot = PCI_SLOT(d->devfn);
+
     SeL4State *s = SEL4_STATE(current_accel());
     struct sel4_vpci_device vpcidev = {
-            .pcidev = pci_dev_count,
+        .pcidev = slot,
     };
 
-    pci_devs[pci_dev_count] = d;
-    printf("Registering PCI device to VMM\n");
+    pci_devs[slot] = d;
+    printf("Registering PCI device %u to VMM\n", slot);
 
     if (sel4_vm_ioctl(s, SEL4_CREATE_VPCI_DEVICE, &vpcidev)) {
         fprintf(stderr, "Failed to register PCI device: %m\n");
     }
-
-    pci_dev_count++;
-
-    // INTX = 1 -> IRQ 0
-    printf("IRQ for this device is %d\n", pci_resolve_irq(d, 0));
 }
 
 void sel4_set_irq(unsigned int irq, bool state)
 {
+    int err;
+
     if (!using_sel4()) {
         return;
     }
 
     SeL4State *s = SEL4_STATE(current_accel());
-    struct sel4_irqline irqline = {
-        .irq = irq,
-        .op = state ? SEL4_IRQ_OP_SET : SEL4_IRQ_OP_CLR,
-    };
 
-    if (sel4_vm_ioctl(s, SEL4_SET_IRQLINE, &irqline))
-        fprintf(stderr, "Failed to set irq: %m\n");
+    if (state) {
+        err = sel4_rpc_doorbell(driver_req_set_irqline(&s->rpc, irq));
+    } else {
+        err = sel4_rpc_doorbell(driver_req_clear_irqline(&s->rpc, irq));
+    }
+
+    if (err) {
+        fprintf(stderr, "Failed to set IRQ %u\n", irq);
+        exit(1);
+    }
 }
 
 static void sel4_change_state_handler(void *opaque, bool running, RunState state)
@@ -189,76 +184,137 @@ static void sel4_change_state_handler(void *opaque, bool running, RunState state
     }
 }
 
-static void sel4_mmio_do_io(struct sel4_ioreq *ioreq)
+static int sel4_mmio_do_io(unsigned int dir, seL4_Word addr, seL4_Word *data,
+                           unsigned int len)
 {
-    qemu_mutex_lock_iothread();
-    switch (ioreq->direction) {
-    case SEL4_IO_DIR_WRITE:
-        address_space_write(&address_space_memory, ioreq->addr, MEMTXATTRS_UNSPECIFIED, &ioreq->data, ioreq->len);
-        break;
-    case SEL4_IO_DIR_READ:
-        address_space_read(&address_space_memory, ioreq->addr, MEMTXATTRS_UNSPECIFIED, &ioreq->data, ioreq->len);
-        break;
-    default:
-        error_report("sel4: invalid ioreq direction (%d)", ioreq->direction);
-        break;
+    MemTxResult result;
+
+    if (dir == SEL4_IO_DIR_READ) {
+        result = address_space_read(&address_space_memory, addr,
+                                    MEMTXATTRS_UNSPECIFIED, data, len);
+    } else {
+        result = address_space_write(&address_space_memory, addr,
+                                     MEMTXATTRS_UNSPECIFIED, data, len);
     }
-    qemu_mutex_unlock_iothread();
+
+    return (result == MEMTX_OK) ? 0 : -1;
 }
 
-static void sel4_pci_do_io(struct sel4_ioreq *ioreq)
+static int sel4_pci_do_io(unsigned int addr_space, unsigned int dir,
+                          seL4_Word addr, seL4_Word *data,
+                          unsigned int len)
 {
-    PCIDevice *dev = pci_devs[ioreq->addr_space];
+    if (addr_space >= ARRAY_SIZE(pci_devs)) {
+        return -1;
+    }
+
+    PCIDevice *dev = pci_devs[addr_space];
+    if (!dev) {
+        return -1;
+    }
+
     uint64_t val;
 
-    qemu_mutex_lock_iothread();
-    switch (ioreq->direction) {
-    case SEL4_IO_DIR_WRITE:
+    if (dir == SEL4_IO_DIR_READ) {
+        val = dev->config_read(dev, addr, len);
+        memcpy(data, &val, len);
+    } else {
         val = 0;
-        memcpy(&val, &ioreq->data, ioreq->len);
-        dev->config_write(dev, ioreq->addr, val, ioreq->len);
-        break;
-    case SEL4_IO_DIR_READ:
-        val = dev->config_read(dev, ioreq->addr, ioreq->len);
-        memcpy(&ioreq->data, &val, ioreq->len);
-        break;
-    default:
-        error_report("sel4: invalid ioreq direction (%d)", ioreq->direction);
-        break;
+        memcpy(&val, data, len);
+        dev->config_write(dev, addr, val, len);
     }
-    qemu_mutex_unlock_iothread();
+
+    return 0;
 }
 
-static inline void handle_ioreq(SeL4State *s)
+static inline int handle_mmio(SeL4State *s, rpcmsg_t *req)
 {
-    struct sel4_ioreq *ioreq;
-    int slot;
+    int err;
 
-    for (slot = 0; slot < SEL4_MAX_IOREQS; slot++) {
-        ioreq = &s->ioreq_buffer->request_slots[slot];
-        if (qatomic_load_acquire(&ioreq->state) == SEL4_IOREQ_STATE_PROCESSING) {
-            if (ioreq->addr_space == AS_GLOBAL) {
-                sel4_mmio_do_io(ioreq);
-            } else {
-                sel4_pci_do_io(ioreq);
-            }
+    seL4_Word dir = BIT_FIELD_GET(req->mr0, RPC_MR0_MMIO_DIRECTION);
+    seL4_Word as = BIT_FIELD_GET(req->mr0, RPC_MR0_MMIO_ADDR_SPACE);
+    seL4_Word len = BIT_FIELD_GET(req->mr0, RPC_MR0_MMIO_LENGTH);
+    seL4_Word slot = BIT_FIELD_GET(req->mr0, RPC_MR0_MMIO_SLOT);
+    seL4_Word addr = req->mr1;
+    seL4_Word data = req->mr2;
 
-            sel4_vm_ioctl(s, SEL4_NOTIFY_IO_HANDLED, slot);
-        }
+    qemu_mutex_lock_iothread();
+
+    if (as == AS_GLOBAL) {
+        err = sel4_mmio_do_io(dir, addr, &data, len);
+    } else {
+        err = sel4_pci_do_io(as, dir, addr, &data, len);
     }
+
+    qemu_mutex_unlock_iothread();
+
+    if (err) {
+        fprintf(stderr, "%s failed, addr=0x%lx, dir=%u\n", __func__, addr, dir);
+        exit(1);
+    }
+
+    return driver_ack_mmio_finish(&s->rpc, slot, data) ? 0 : -1;
+}
+
+static int handle_msg(SeL4State *s, rpcmsg_t *msg)
+{
+    unsigned int op = BIT_FIELD_GET(msg->mr0, RPC_MR0_OP);
+
+    switch (op) {
+    case RPC_MR0_OP_MMIO:
+        return handle_mmio(s, msg);
+    default:
+        /* no idea what to do */
+        return -1;
+    }
+
+    return 0;
+}
+
+static inline int sel4_vm_wait_for_io(SeL4State *s)
+{
+    return sel4_vm_ioctl(s, SEL4_WAIT_IO, 0);
 }
 
 static void *do_sel4_virtio(void *opaque)
 {
     SeL4State *s = opaque;
+    rpcmsg_t *msg;
     int rc;
 
     for (;;) {
-        rc = sel4_vm_ioctl(s, SEL4_WAIT_IO, 0);
+        sel4_rpc_doorbell(&s->rpc);
+
+        rc = sel4_vm_wait_for_io(s);
         if (rc)
             continue;
 
-        handle_ioreq(s);
+        while ((msg = rpcmsg_queue_head(s->rpc.rx_queue)) != NULL) {
+            seL4_Word state = BIT_FIELD_GET(msg->mr0, RPC_MR0_STATE);
+
+            if (state == RPC_MR0_STATE_RESERVED) {
+                /* VMM side is still crafting the message, try again later */
+                break;
+            } else if (state == RPC_MR0_STATE_PENDING) {
+                /* kernel has not examined this yet, try again later */
+                break;
+            } else if (state != RPC_MR0_STATE_PROCESSING) {
+                /* kernel is supposed to discard completed ioeventfds */
+                error_report("corrupted msgqueue");
+                exit(1);
+            }
+
+            rc = handle_msg(s, msg);
+            if (rc) {
+                error_report("handle_msg() failed (%d)", rc);
+                exit(1);
+            }
+
+            msg->mr0 = BIT_FIELD_SET(msg->mr0, RPC_MR0_STATE, RPC_MR0_STATE_COMPLETE);
+
+            /* smp_wmb()? */
+            rpcmsg_queue_advance_head(s->rpc.rx_queue);
+        }
     }
 
     return NULL;
@@ -348,6 +404,14 @@ static void sel4_region_del(MemoryListener *listener, MemoryRegionSection *secti
     tii_printf("WARNING: %s entered, but no real implementation\n", __func__);
 }
 
+static void s2_fault_doorbell(void *cookie)
+{
+    uint32_t *event_bar = cookie;
+
+    /* data does not matter, just the write fault */
+    event_bar[0] = 1;
+}
+
 static int sel4_init(MachineState *ms)
 {
     MachineClass *mc = MACHINE_GET_CLASS(ms);
@@ -407,13 +471,31 @@ static int sel4_init(MachineState *ms)
     }
     s->ioreqfd = rc;
 
-    s->ioreq_buffer = mmap(NULL, sizeof(*s->ioreq_buffer),
-                           PROT_READ | PROT_WRITE, MAP_SHARED, s->ioreqfd, 0);
-    if (!s->ioreq_buffer) {
+    s->iobuf = mmap(NULL, 2 * 4096, PROT_READ | PROT_WRITE, MAP_SHARED,
+                    s->ioreqfd, 0);
+    if (!s->iobuf) {
         fprintf(stderr, "sel4: iohandler mmap failed %m\n");
         goto err;
     }
 
+    rc = sel4_vm_ioctl(s, SEL4_CREATE_EVENT_BAR, 0);
+    if (rc < 0) {
+        fprintf(stderr, "sel4: create event handler failed: %d %s\n", -rc,
+                strerror(-rc));
+        goto err;
+    }
+    s->event_bar_fd = rc;
+    s->event_bar = mmap(NULL, 4096, PROT_READ | PROT_WRITE, MAP_SHARED,
+                        s->event_bar_fd, 0);
+    if (!s->iobuf) {
+        fprintf(stderr, "sel4: event mmap failed %m\n");
+        goto err;
+    }
+
+    s->rpc.rx_queue = device_rx_queue(s->iobuf);
+    s->rpc.tx_queue = device_tx_queue(s->iobuf);
+    s->rpc.doorbell = s2_fault_doorbell;
+    s->rpc.doorbell_cookie = (void *)(((uintptr_t)s->event_bar) + EVENT_BAR_EMIT_REGISTER);
     s->mem_listener.eventfd_add = sel4_io_ioeventfd_add;
     s->mem_listener.eventfd_del = sel4_io_ioeventfd_del;
     s->mem_listener.region_add = sel4_region_add;
@@ -426,8 +508,11 @@ static int sel4_init(MachineState *ms)
     return 0;
 
 err:
-    if (s->ioreq_buffer)
-        munmap(s->ioreq_buffer, sizeof(*s->ioreq_buffer));
+    if (s->event_bar)
+        munmap(s->event_bar, 4096);
+
+    if (s->iobuf)
+        munmap(s->iobuf, 2 * 4096);
 
     if (ram)
         munmap(ram, ms->ram_size);
@@ -546,7 +631,7 @@ static void sel4_accel_instance_init(Object *obj)
     s->fd = -1;
     s->vmfd = -1;
     s->ioreqfd = -1;
-    s->ioreq_buffer = NULL;
+    memset(&s->rpc, 0, sizeof(s->rpc));
 
     virt_memmap_customize = sel4_memmap_customize;
 }
