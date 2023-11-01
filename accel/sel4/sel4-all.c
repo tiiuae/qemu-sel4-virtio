@@ -24,6 +24,8 @@
 #include <sys/ioctl.h>
 #include <sel4/sel4_virt.h>
 
+#define PCI_NUM_SLOTS   (32)
+
 extern MemMapEntry (*virt_memmap_customize)(const MemMapEntry *base_memmap, int i);
 
 static MemMapEntry sel4_memmap_customize(const MemMapEntry *base_memmap, int i);
@@ -117,8 +119,7 @@ void tii_printf(const char *fmt, ...)
     qmp_ringbuf_write("debug", tmp, false, 0, &err);
 }
 
-static unsigned int pci_dev_count;
-static PCIDevice *pci_devs[16];
+static PCIDevice *pci_devs[PCI_NUM_SLOTS];
 static uintptr_t pci_base[16];
 static unsigned int pci_base_count;
 
@@ -146,19 +147,19 @@ void sel4_register_pci_device(PCIDevice *d)
         return;
     }
 
+    unsigned int slot = PCI_SLOT(d->devfn);
+
     SeL4State *s = SEL4_STATE(current_accel());
     struct sel4_vpci_device vpcidev = {
-            .pcidev = pci_dev_count,
+        .pcidev = slot,
     };
 
-    pci_devs[pci_dev_count] = d;
-    printf("Registering PCI device to VMM\n");
+    pci_devs[slot] = d;
+    printf("Registering PCI device %u to VMM\n", slot);
 
     if (sel4_vm_ioctl(s, SEL4_CREATE_VPCI_DEVICE, &vpcidev)) {
         fprintf(stderr, "Failed to register PCI device: %m\n");
     }
-
-    pci_dev_count++;
 
     // INTX = 1 -> IRQ 0
     printf("IRQ for this device is %d\n", pci_resolve_irq(d, 0));
