@@ -51,8 +51,9 @@ struct GPEXHost {
     MemoryRegion io_mmio;
     MemoryRegion io_ioport_window;
     MemoryRegion io_mmio_window;
-    qemu_irq irq[GPEX_NUM_IRQS];
-    int irq_num[GPEX_NUM_IRQS];
+    qemu_irq *irq;
+    int *irq_num;
+    uint32_t num_irqs;
 
     bool allow_unmapped_accesses;
 };

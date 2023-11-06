@@ -50,7 +50,7 @@ static void gpex_set_irq(void *opaque, int irq_num, int level)
 
 int gpex_set_irq_num(GPEXHost *s, int index, int gsi)
 {
-    if (index >= GPEX_NUM_IRQS) {
+    if (index >= s->num_irqs) {
         return -EINVAL;
     }
 
@@ -72,6 +72,11 @@ static PCIINTxRoute gpex_route_intx_pin_to_irq(void *opaque, int pin)
     }
 
     return route;
+}
+
+static int gpex_direct_map_irq_fn(PCIDevice *pci_dev, int pin)
+{
+    return PCI_SLOT(pci_dev->devfn) - 1;
 }
 
 static void gpex_host_realize(DeviceState *dev, Error **errp)
@@ -128,14 +133,17 @@ static void gpex_host_realize(DeviceState *dev, Error **errp)
         sysbus_init_mmio(sbd, &s->io_ioport);
     }
 
-    for (i = 0; i < GPEX_NUM_IRQS; i++) {
+    s->irq = g_new0(qemu_irq, s->num_irqs);
+    s->irq_num = g_new0(int, s->num_irqs);
+
+    for (i = 0; i < s->num_irqs; i++) {
         sysbus_init_irq(sbd, &s->irq[i]);
         s->irq_num[i] = -1;
     }
 
     pci->bus = pci_register_root_bus(dev, "pcie.0", gpex_set_irq,
-                                     pci_swizzle_map_irq_fn, s, &s->io_mmio,
-                                     &s->io_ioport, 0, 4, TYPE_PCIE_BUS);
+                                     s->num_irqs > GPEX_NUM_IRQS ? gpex_direct_map_irq_fn : pci_swizzle_map_irq_fn,
+                                     s, &s->io_mmio, &s->io_ioport, 0, s->num_irqs, TYPE_PCIE_BUS);
 
     pci_bus_set_route_irq_fn(pci->bus, gpex_route_intx_pin_to_irq);
     qdev_realize(DEVICE(&s->gpex_root), BUS(pci->bus), &error_fatal);
@@ -154,6 +162,7 @@ static Property gpex_host_properties[] = {
      */
     DEFINE_PROP_BOOL("allow-unmapped-accesses", GPEXHost,
                      allow_unmapped_accesses, true),
+    DEFINE_PROP_UINT32("num-irqs", GPEXHost, num_irqs, 4),
     DEFINE_PROP_END_OF_LIST(),
 };
 
