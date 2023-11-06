@@ -33,6 +33,9 @@ extern bool sel4_ext_vpci_bus;
 
 #endif /* CONFIG_SEL4_IS_POSSIBLE */
 
+void sel4_register_pci_device(PCIDevice *d);
 void sel4_set_irq(unsigned int irq, bool);
+
+int sel4_pcihost_set_irq_num(DeviceState *dev, int index, int gsi);
 
 #endif
