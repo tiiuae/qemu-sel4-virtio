@@ -21,15 +21,18 @@
 #ifdef CONFIG_SEL4_IS_POSSIBLE
 
 extern bool sel4_allowed;
+extern bool sel4_ext_vpci_bus;
 
-#define sel4_enabled()           (sel4_allowed)
-
-void sel4_set_irq(unsigned int irq, bool);
+#define sel4_enabled()              (sel4_allowed)
+#define sel4_ext_vpci_bus_enabled() (sel4_ext_vpci_bus)
 
 #else /* !CONFIG_SEL4_IS_POSSIBLE */
 
-#define sel4_enabled() 0
+#define sel4_enabled()              (false)
+#define sel4_ext_vpci_bus_enabled() (false)
 
 #endif /* CONFIG_SEL4_IS_POSSIBLE */
+
+void sel4_set_irq(unsigned int irq, bool);
 
 #endif
