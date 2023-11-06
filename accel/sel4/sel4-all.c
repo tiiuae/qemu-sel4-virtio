@@ -33,6 +33,7 @@ void tii_printf(const char *fmt, ...);
 static int vmid = 1;
 static MemoryRegion ram_mr;
 bool sel4_allowed;
+bool sel4_ext_vpci_bus;
 
 void sel4_register_pci_device(PCIDevice *d);
 
@@ -392,6 +393,8 @@ static int sel4_init(MachineState *ms)
     s->mem_listener.region_del = sel4_region_del;
 
     memory_listener_register(&s->mem_listener, &address_space_memory);
+
+    sel4_ext_vpci_bus = true;
 
     qemu_add_vm_change_state_handler(sel4_change_state_handler, s);
 
