@@ -1481,12 +1481,6 @@ static void create_pcie(VirtMachineState *vms)
     MachineState *ms = MACHINE(vms);
 
     dev = qdev_new(TYPE_GPEX_HOST);
-
-    // FIXME: hackery
-    if (sel4_ext_vpci_bus_enabled()) {
-        qdev_prop_set_uint32(dev, "num-irqs", SEL4_VPCI_INTERRUPTS);
-    }
-
     sysbus_realize_and_unref(SYS_BUS_DEVICE(dev), &error_fatal);
 
     ecam_id = VIRT_ECAM_ID(vms->highmem_ecam);
@@ -1524,20 +1518,10 @@ static void create_pcie(VirtMachineState *vms)
     /* Map IO port space */
     sysbus_mmio_map(SYS_BUS_DEVICE(dev), 2, base_pio);
 
-    /* FIXME: hackery */
-    if (sel4_ext_vpci_bus_enabled()) {
-        irq = NUM_IRQS;
-    }
-
-    for (i = 0; i < GPEX_HOST(dev)->num_irqs; i++) {
+    for (i = 0; i < GPEX_NUM_IRQS; i++) {
         sysbus_connect_irq(SYS_BUS_DEVICE(dev), i,
                            qdev_get_gpio_in(vms->gic, irq + i));
         gpex_set_irq_num(GPEX_HOST(dev), i, irq + i);
-    }
-
-    /* FIXME: hackery */
-    if (sel4_ext_vpci_bus_enabled()) {
-        irq = vms->irqmap[VIRT_PCIE];
     }
 
     pci = PCI_HOST_BRIDGE(dev);
