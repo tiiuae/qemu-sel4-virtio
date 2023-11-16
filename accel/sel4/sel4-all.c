@@ -35,8 +35,6 @@ static MemoryRegion ram_mr;
 bool sel4_allowed;
 bool sel4_ext_vpci_bus;
 
-void sel4_register_pci_device(PCIDevice *d);
-
 static QemuThread sel4_virtio_thread;
 
 static void *do_sel4_virtio(void *opaque);

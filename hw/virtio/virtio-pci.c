@@ -1621,8 +1621,6 @@ static void virtio_pci_pre_plugged(DeviceState *d, Error **errp)
     virtio_add_feature(&vdev->host_features, VIRTIO_F_BAD_FEATURE);
 }
 
-void sel4_register_pci_device(PCIDevice *d);
-
 /* This is called by virtio-bus just after the device is plugged. */
 static void virtio_pci_device_plugged(DeviceState *d, Error **errp)
 {
@@ -1763,8 +1761,6 @@ static void virtio_pci_device_plugged(DeviceState *d, Error **errp)
 
     proxy->pci_dev.config_write = virtio_write_config;
     proxy->pci_dev.config_read = virtio_read_config;
-
-    sel4_register_pci_device(&proxy->pci_dev);
 
     if (legacy) {
         size = VIRTIO_PCI_REGION_SIZE(&proxy->pci_dev)
