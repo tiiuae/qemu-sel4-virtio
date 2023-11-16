@@ -867,7 +867,10 @@ static void create_sel4_intc(VirtMachineState *vms)
     sysbus_realize_and_unref(SYS_BUS_DEVICE(vms->gic), &error_fatal);
 
     fdt_add_gic_node(vms);
-    create_v2m(vms);
+
+    if (!sel4_ext_vpci_bus_enabled()) {
+        create_v2m(vms);
+    }
 }
 
 static void create_uart(const VirtMachineState *vms, int uart,
@@ -1424,6 +1427,57 @@ static void create_virtio_iommu_dt_bindings(VirtMachineState *vms)
     qemu_fdt_setprop_cells(ms->fdt, vms->pciehb_nodename, "iommu-map",
                            0x0, vms->iommu_phandle, 0x0, bdf,
                            bdf + 1, vms->iommu_phandle, bdf + 1, 0xffff - bdf);
+}
+
+static void create_sel4_pcie(VirtMachineState *vms)
+{
+    DeviceState *dev;
+    MemoryRegion *mmio_alias;
+    MemoryRegion *mmio_reg;
+    PCIHostState *pci;
+    int i;
+
+    hwaddr base_mmio = vms->memmap[VIRT_PCIE_MMIO].base;
+    hwaddr size_mmio = vms->memmap[VIRT_PCIE_MMIO].size;
+    hwaddr base_pio = vms->memmap[VIRT_PCIE_PIO].base;
+
+    /* PCI device interrupts are mapped after SPIs */
+    int irq = NUM_IRQS;
+
+    dev = qdev_new("sel4-pci-host");
+    sysbus_realize_and_unref(SYS_BUS_DEVICE(dev), &error_fatal);
+
+    /* Map mmio region */
+    mmio_alias = g_new0(MemoryRegion, 1);
+    mmio_reg = sysbus_mmio_get_region(SYS_BUS_DEVICE(dev), 0);
+    memory_region_init_alias(mmio_alias, OBJECT(dev), "sel4-pcie-mmio",
+                             mmio_reg, base_mmio, size_mmio);
+    memory_region_add_subregion_overlap(get_system_memory(), base_mmio, mmio_alias, 1);
+
+    /* Map IO port space */
+    sysbus_mmio_map(SYS_BUS_DEVICE(dev), 1, base_pio);
+
+    for (i = 0; i < SEL4_VPCI_INTERRUPTS; i++) {
+        sysbus_connect_irq(SYS_BUS_DEVICE(dev), i,
+                           qdev_get_gpio_in(vms->gic, irq + i));
+        sel4_pcihost_set_irq_num(dev, i, irq + i);
+    }
+
+    pci = PCI_HOST_BRIDGE(dev);
+
+    pci->bypass_iommu = vms->default_bus_bypass_iommu;
+    vms->bus = pci->bus;
+    if (vms->bus) {
+        for (i = 0; i < nb_nics; i++) {
+            NICInfo *nd = &nd_table[i];
+
+            if (!nd->model) {
+                nd->model = g_strdup("virtio");
+            }
+
+            pci_nic_init_nofail(nd, pci->bus, nd->model, NULL);
+        }
+    }
 }
 
 static void create_pcie(VirtMachineState *vms)
@@ -2310,7 +2364,11 @@ static void machvirt_init(MachineState *machine)
 
     create_rtc(vms);
 
-    create_pcie(vms);
+    if (sel4_ext_vpci_bus_enabled()) {
+        create_sel4_pcie(vms);
+    } else {
+        create_pcie(vms);
+    }
 
     if (has_ged && aarch64 && firmware_loaded && virt_is_acpi_enabled(vms)) {
         vms->acpi_dev = create_acpi_ged(vms);
