@@ -18,15 +18,9 @@
 #include "hw/pci/pci_bus.h"
 #include "migration/vmstate.h"
 
-#include "hw/arm/virt.h"
-
 #include <stdarg.h>
 #include <sys/ioctl.h>
 #include <sel4/sel4_virt.h>
-
-extern MemMapEntry (*virt_memmap_customize)(const MemMapEntry *base_memmap, int i);
-
-static MemMapEntry sel4_memmap_customize(const MemMapEntry *base_memmap, int i);
 
 void tii_printf(const char *fmt, ...);
 
@@ -459,7 +453,7 @@ out:
     return ret;
 }
 
-static MemMapEntry sel4_memmap_customize(const MemMapEntry *base_memmap, int i)
+MemMapEntry sel4_region_get(SeL4MemoryRegion region)
 {
     static bool init = false;
     MemMapEntry e;
@@ -472,25 +466,22 @@ static MemMapEntry sel4_memmap_customize(const MemMapEntry *base_memmap, int i)
         init = true;
     }
 
-    switch (i) {
-    case VIRT_MEM:
+    switch (region) {
+    case SEL4_REGION_RAM:
         e.base = uservm_ram_base;
         e.size = uservm_ram_size;
         break;
-    case VIRT_PCIE_MMIO:
+    case SEL4_REGION_PCIE_MMIO:
         e.base = uservm_pcie_mmio_base;
         e.size = uservm_pcie_mmio_size;
         break;
-    case VIRT_PCIE_PIO:
+    case SEL4_REGION_PCIE_PIO:
         e.base = uservm_pcie_mmio_base + uservm_pcie_mmio_size;
         e.size = 0x10000;
         break;
-    case VIRT_PCIE_ECAM:
-        e.base = uservm_pcie_mmio_base + uservm_pcie_mmio_size + 0x10000;
-        e.size = 0x1000000;
-        break;
     default:
-        return base_memmap[i];
+        fprintf(stderr, "Invalid memory region %d\n", region);
+        exit(1);
     };
 
     return e;
@@ -514,8 +505,6 @@ static void sel4_accel_instance_init(Object *obj)
     s->vmfd = -1;
     s->ioreqfd = -1;
     s->ioreq_buffer = NULL;
-
-    virt_memmap_customize = sel4_memmap_customize;
 }
 
 static const TypeInfo sel4_accel_type = {

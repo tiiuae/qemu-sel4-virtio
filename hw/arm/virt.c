@@ -38,6 +38,7 @@
 #include "hw/arm/boot.h"
 #include "hw/arm/primecell.h"
 #include "hw/arm/virt.h"
+#include "hw/arm/virt-sel4.h"
 #include "hw/block/flash.h"
 #include "hw/vfio/vfio-calxeda-xgmac.h"
 #include "hw/vfio/vfio-amd-xgbe.h"
@@ -1407,57 +1408,6 @@ static void create_virtio_iommu_dt_bindings(VirtMachineState *vms)
                            bdf + 1, vms->iommu_phandle, bdf + 1, 0xffff - bdf);
 }
 
-static void create_sel4_pcie(VirtMachineState *vms)
-{
-    DeviceState *dev;
-    MemoryRegion *mmio_alias;
-    MemoryRegion *mmio_reg;
-    PCIHostState *pci;
-    int i;
-
-    hwaddr base_mmio = vms->memmap[VIRT_PCIE_MMIO].base;
-    hwaddr size_mmio = vms->memmap[VIRT_PCIE_MMIO].size;
-    hwaddr base_pio = vms->memmap[VIRT_PCIE_PIO].base;
-
-    /* PCI device interrupts are mapped after SPIs */
-    int irq = NUM_IRQS;
-
-    dev = qdev_new("sel4-pci-host");
-    sysbus_realize_and_unref(SYS_BUS_DEVICE(dev), &error_fatal);
-
-    /* Map mmio region */
-    mmio_alias = g_new0(MemoryRegion, 1);
-    mmio_reg = sysbus_mmio_get_region(SYS_BUS_DEVICE(dev), 0);
-    memory_region_init_alias(mmio_alias, OBJECT(dev), "sel4-pcie-mmio",
-                             mmio_reg, base_mmio, size_mmio);
-    memory_region_add_subregion_overlap(get_system_memory(), base_mmio, mmio_alias, 1);
-
-    /* Map IO port space */
-    sysbus_mmio_map(SYS_BUS_DEVICE(dev), 1, base_pio);
-
-    for (i = 0; i < SEL4_VPCI_INTERRUPTS; i++) {
-        sysbus_connect_irq(SYS_BUS_DEVICE(dev), i,
-                           qdev_get_gpio_in(vms->gic, irq + i));
-        sel4_pcihost_set_irq_num(dev, i, irq + i);
-    }
-
-    pci = PCI_HOST_BRIDGE(dev);
-
-    pci->bypass_iommu = vms->default_bus_bypass_iommu;
-    vms->bus = pci->bus;
-    if (vms->bus) {
-        for (i = 0; i < nb_nics; i++) {
-            NICInfo *nd = &nd_table[i];
-
-            if (!nd->model) {
-                nd->model = g_strdup("virtio");
-            }
-
-            pci_nic_init_nofail(nd, pci->bus, nd->model, NULL);
-        }
-    }
-}
-
 static void create_pcie(VirtMachineState *vms)
 {
     hwaddr base_mmio = vms->memmap[VIRT_PCIE_MMIO].base;
@@ -1753,14 +1703,6 @@ static uint64_t virt_cpu_mp_affinity(VirtMachineState *vms, int idx)
     return arm_cpu_mp_affinity(idx, clustersz);
 }
 
-static MemMapEntry noop_memmap_customize(const MemMapEntry *base_memmap, int i)
-{
-    return base_memmap[i];
-}
-
-MemMapEntry (*virt_memmap_customize)(const MemMapEntry *base_memmap, int i) =
-    noop_memmap_customize;
-
 static void virt_set_memmap(VirtMachineState *vms, int pa_bits)
 {
     MachineState *ms = MACHINE(vms);
@@ -1770,7 +1712,11 @@ static void virt_set_memmap(VirtMachineState *vms, int pa_bits)
     vms->memmap = extended_memmap;
 
     for (i = 0; i < ARRAY_SIZE(base_memmap); i++) {
-        vms->memmap[i] = virt_memmap_customize(base_memmap, i);
+        vms->memmap[i] = base_memmap[i];
+    }
+
+    if (sel4_enabled()) {
+        sel4_virt_memmap_init(vms);
     }
 
     if (ms->ram_slots > ACPI_MAX_RAM_SLOTS) {
@@ -2313,10 +2259,10 @@ static void machvirt_init(MachineState *machine)
 
     create_rtc(vms);
 
+    create_pcie(vms);
+
     if (sel4_ext_vpci_bus_enabled()) {
-        create_sel4_pcie(vms);
-    } else {
-        create_pcie(vms);
+        sel4_virt_create_pcie(vms, NUM_IRQS);
     }
 
     if (has_ged && aarch64 && firmware_loaded && virt_is_acpi_enabled(vms)) {
