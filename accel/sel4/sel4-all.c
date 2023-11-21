@@ -115,14 +115,9 @@ void tii_printf(const char *fmt, ...)
 static unsigned int pci_dev_count;
 static PCIDevice *pci_devs[SEL4_VPCI_INTERRUPTS];
 
-static inline bool using_sel4(void)
-{
-    return virt_memmap_customize == sel4_memmap_customize;
-}
-
 void sel4_register_pci_device(PCIDevice *d)
 {
-    if (!using_sel4()) {
+    if (!sel4_enabled()) {
         return;
     }
 
@@ -143,7 +138,7 @@ void sel4_register_pci_device(PCIDevice *d)
 
 void sel4_set_irq(unsigned int irq, bool state)
 {
-    if (!using_sel4()) {
+    if (!sel4_enabled()) {
         return;
     }
 
@@ -413,7 +408,6 @@ err:
 
     return rc;
 }
-
 
 static unsigned long uservm_ram_base;
 static unsigned long uservm_ram_size;
