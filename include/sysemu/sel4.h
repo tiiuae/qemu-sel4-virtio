@@ -33,6 +33,13 @@ extern bool sel4_ext_vpci_bus;
 
 #endif /* CONFIG_SEL4_IS_POSSIBLE */
 
+typedef enum {
+    SEL4_REGION_RAM,
+    SEL4_REGION_PCIE_MMIO,
+    SEL4_REGION_PCIE_PIO,
+} SeL4MemoryRegion;
+
+MemMapEntry sel4_region_get(SeL4MemoryRegion region);
 void sel4_register_pci_device(PCIDevice *d);
 void sel4_set_irq(unsigned int irq, bool);
 
