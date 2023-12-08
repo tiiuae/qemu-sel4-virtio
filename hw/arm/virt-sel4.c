@@ -15,6 +15,46 @@
 #include "hw/pci/pci.h"
 #include "net/net.h"
 
+extern void tii_printf(const char *fmt, ...);
+
+const char *sel4_virt_mmio_regions[] = {
+    "gicv2m",
+    "pcie-mmcfg-mmio",
+    "gpex_mmio_window",
+    "gpex_ioport_window"
+};
+
+static inline bool _sel4_virt_allowed_region(char const * const region_name)
+{
+    for (unsigned i = 0; i < ARRAY_SIZE(sel4_virt_mmio_regions); i++) {
+        if (!strcmp(region_name, sel4_virt_mmio_regions[i]))
+            return true;
+    }
+    return false;
+}
+
+static inline bool sel4_virt_allowed_region(MemoryRegion *mr)
+{
+    return _sel4_virt_allowed_region(memory_region_name(mr));
+}
+
+static void sel4_virt_region_add(MemoryListener *listener, MemoryRegionSection *section)
+{
+    tii_printf("%s entered, region name %s, offset within address space 0x%lx, size 0x%lx\n",
+               __func__, memory_region_name(section->mr),
+               (uint64_t) section->offset_within_address_space,
+               (uint64_t) section->size);
+
+    if (sel4_virt_allowed_region(section->mr)) {
+        sel4_mmio_region_add(section);
+    }
+}
+
+static MemoryListener sel4_mmio_mem_listener = {
+    .name = "sel4-virt-arm",
+    .region_add = sel4_virt_region_add,
+};
+
 void sel4_virt_memmap_init(VirtMachineState *vms)
 {
     if (!vms->memmap) {
@@ -23,6 +63,8 @@ void sel4_virt_memmap_init(VirtMachineState *vms)
     }
 
     vms->memmap[VIRT_MEM] = sel4_region_get(SEL4_REGION_RAM);
+
+    memory_listener_register(&sel4_mmio_mem_listener, &address_space_memory);
 }
 
 void sel4_virt_create_pcie(VirtMachineState *vms, unsigned int irq_base)
