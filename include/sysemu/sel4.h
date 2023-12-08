@@ -40,6 +40,8 @@ typedef enum {
 } SeL4MemoryRegion;
 
 MemMapEntry sel4_region_get(SeL4MemoryRegion region);
+int sel4_mmio_region_add(MemoryRegionSection *section);
+int sel4_mmio_region_del(MemoryRegionSection *section);
 void sel4_register_pci_device(PCIDevice *d);
 void sel4_set_irq(unsigned int irq, bool);
 

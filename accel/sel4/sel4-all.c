@@ -10,6 +10,7 @@
 #include "qapi/error.h"
 #include "qemu/accel.h"
 #include "qemu/atomic.h"
+#include "qemu/range.h"
 #include "sysemu/cpus.h"
 #include "sysemu/runstate.h"
 #include "sysemu/sel4.h"
@@ -47,6 +48,16 @@ typedef struct SeL4State
 #define TYPE_SEL4_ACCEL ACCEL_CLASS_NAME("sel4")
 
 DECLARE_INSTANCE_CHECKER(SeL4State, SEL4_STATE, TYPE_SEL4_ACCEL)
+
+typedef struct SeL4MmioRegion {
+    hwaddr start_addr;
+    Int128 size;
+    QLIST_ENTRY(SeL4MmioRegion) list;
+} SeL4MmioRegion;
+
+static QLIST_HEAD(, SeL4MmioRegion) mmio_regions = QLIST_HEAD_INITIALIZER(mmio_regions);
+
+static QemuMutex sel4_mmio_regions_lock;
 
 static int sel4_ioctl(SeL4State *s, int type, ...)
 {
@@ -487,6 +498,84 @@ MemMapEntry sel4_region_get(SeL4MemoryRegion region)
     return e;
 }
 
+static int sel4_set_mmio_region(SeL4State *s,
+                                hwaddr addr,
+                                uint64_t size,
+                                bool set)
+{
+    struct sel4_mmio_region_config config = {
+        .gpa = addr,
+        .len = size,
+        .flags = set ? 0 : SEL4_MMIO_REGION_FREE,
+    };
+
+    if (sel4_vm_ioctl(s, SEL4_MMIO_REGION, &config) < 0) {
+        return -errno;
+    }
+
+    return 0;
+}
+
+int sel4_mmio_region_add(MemoryRegionSection *section)
+{
+    SeL4MmioRegion *entry;
+    SeL4State *s = SEL4_STATE(current_accel());
+    int rc = 0;
+
+    QEMU_LOCK_GUARD(&sel4_mmio_regions_lock);
+
+    QLIST_FOREACH(entry, &mmio_regions, list) {
+        if (ranges_overlap(entry->start_addr, int128_get64(entry->size),
+                           section->offset_within_address_space,
+                           int128_get64(section->size))) {
+            /* Already registered */
+            return 1;
+        }
+    }
+
+    if (memory_region_is_ram(section->mr)) {
+        fprintf(stderr, "%s: mmio region is RAM\n", __func__);
+        return -1;
+    }
+
+    rc = sel4_set_mmio_region(s, section->offset_within_address_space,
+                              int128_get64(section->size), true);
+    if (rc) {
+        fprintf(stderr, "%s: mmio region register failed: %d\n",
+                __func__, rc);
+        return rc;
+    }
+
+    entry = g_try_new0(SeL4MmioRegion, 1);
+    if (!entry) {
+        fprintf(stderr, "%s: entry allocation failed\n", __func__);
+        return -ENOMEM;
+    }
+
+    entry->start_addr = section->offset_within_address_space;
+    entry->size = section->size;
+
+    QLIST_INSERT_HEAD(&mmio_regions, entry, list);
+
+    return rc;
+}
+
+int sel4_mmio_region_del(MemoryRegionSection *section)
+{
+    SeL4MmioRegion *entry, *tmp;
+    SeL4State *s = SEL4_STATE(current_accel());
+
+    QEMU_LOCK_GUARD(&sel4_mmio_regions_lock);
+    QLIST_FOREACH_SAFE(entry, &mmio_regions, list, tmp) {
+        if (entry->start_addr == section->offset_within_address_space &&
+            int128_get64(entry->size) == int128_get64(section->size)) {
+            QLIST_REMOVE(entry, list);
+            sel4_set_mmio_region(s, entry->start_addr, int128_get64(entry->size), false);
+            g_free(entry);
+        }
+    }
+}
+
 static void sel4_accel_class_init(ObjectClass *oc, void *data)
 {
     AccelClass *ac = ACCEL_CLASS(oc);
@@ -505,6 +594,8 @@ static void sel4_accel_instance_init(Object *obj)
     s->vmfd = -1;
     s->ioreqfd = -1;
     s->ioreq_buffer = NULL;
+
+    qemu_mutex_init(&sel4_mmio_regions_lock);
 }
 
 static const TypeInfo sel4_accel_type = {
