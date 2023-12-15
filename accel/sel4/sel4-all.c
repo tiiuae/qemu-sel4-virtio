@@ -307,18 +307,6 @@ static void sel4_io_ioeventfd_del(MemoryListener *listener,
     }
 }
 
-static void sel4_region_add(MemoryListener *listener, MemoryRegionSection *section)
-{
-    tii_printf("%s entered, region name %s, offset within region 0x%lx, size 0x%lx\n", __func__,
-               memory_region_name(section->mr), (uint64_t) section->offset_within_address_space,
-               (uint64_t) section->size);
-}
-
-static void sel4_region_del(MemoryListener *listener, MemoryRegionSection *section)
-{
-    tii_printf("WARNING: %s entered, but no real implementation\n", __func__);
-}
-
 static int sel4_init(MachineState *ms)
 {
     MachineClass *mc = MACHINE_GET_CLASS(ms);
@@ -387,8 +375,6 @@ static int sel4_init(MachineState *ms)
 
     s->mem_listener.eventfd_add = sel4_io_ioeventfd_add;
     s->mem_listener.eventfd_del = sel4_io_ioeventfd_del;
-    s->mem_listener.region_add = sel4_region_add;
-    s->mem_listener.region_del = sel4_region_del;
 
     memory_listener_register(&s->mem_listener, &address_space_memory);
 
