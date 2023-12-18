@@ -869,7 +869,7 @@ static void create_sel4_intc(VirtMachineState *vms)
 
     fdt_add_gic_node(vms);
 
-    if (!sel4_ext_vpci_bus_enabled()) {
+    if (!sel4_ext_msi_enabled()) {
         create_v2m(vms);
     }
 }
