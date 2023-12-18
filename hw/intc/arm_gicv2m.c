@@ -32,6 +32,7 @@
 #include "hw/pci/msi.h"
 #include "hw/qdev-properties.h"
 #include "sysemu/kvm.h"
+#include "sysemu/sel4.h"
 #include "qemu/log.h"
 #include "qemu/module.h"
 #include "qom/object.h"
@@ -158,6 +159,7 @@ static void gicv2m_realize(DeviceState *dev, Error **errp)
     msi_nonbroken = true;
     kvm_gsi_direct_mapping = true;
     kvm_msi_via_irqfd_allowed = kvm_irqfds_enabled();
+    sel4_msi_via_irqfd_allowed = sel4_irqfds_enabled();
 }
 
 static void gicv2m_init(Object *obj)
