@@ -17,6 +17,8 @@
 #include "hw/boards.h"
 #include "hw/pci/pci.h"
 #include "hw/pci/pci_bus.h"
+#include "hw/pci/msi.h"
+#include "hw/pci/msix.h"
 #include "migration/vmstate.h"
 
 #include <stdarg.h>
@@ -308,6 +310,61 @@ static void sel4_io_ioeventfd_del(MemoryListener *listener,
                 __func__, strerror(-rc), -rc);
         abort();
     }
+}
+
+int sel4_add_msi_route(int vector, PCIDevice *dev)
+{
+    MSIMessage msg = {0, 0};
+
+    if (pci_available && dev) {
+        msg = pci_get_msi_message(dev, vector);
+    }
+
+    // direct gsi mapping
+    return msg.data & 0xffff;
+}
+
+static int sel4_assign_irqfd(SeL4State *s, EventNotifier *event,
+                             EventNotifier *resample, int virq,
+                             bool assign)
+{
+    int fd = event_notifier_get_fd(event);
+    int rfd = resample ? event_notifier_get_fd(resample) : -1;
+
+    struct sel4_irqfd_config irqfd = {
+        .fd = fd,
+        .virq = virq,
+        .flags = assign ? 0 : SEL4_IRQFD_FLAG_DEASSIGN,
+    };
+
+    if (rfd != -1) {
+        assert(assign);
+        error_report("sel4: irqfd resamplefd not supported");
+    }
+
+    if (!sel4_irqfds_enabled()) {
+        return -ENOSYS;
+    }
+
+    int rc = sel4_vm_ioctl(s, SEL4_IRQFD, &irqfd);
+    if (rc) {
+        error_report("sel4: error adding irqfd: %s (%d)",
+                     strerror(-rc), -rc);
+    }
+
+    return rc;
+}
+
+int sel4_add_irqfd_notifier(EventNotifier *n, EventNotifier *rn, int virq)
+{
+    SeL4State *s = SEL4_STATE(current_accel());
+    return sel4_assign_irqfd(s, n, rn, virq, true);
+}
+
+int sel4_remove_irqfd_notifier(EventNotifier *n, int virq)
+{
+    SeL4State *s = SEL4_STATE(current_accel());
+    return sel4_assign_irqfd(s, n, NULL, virq, false);
 }
 
 static int sel4_init(MachineState *ms)
