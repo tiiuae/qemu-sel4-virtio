@@ -382,6 +382,7 @@ static int sel4_init(MachineState *ms)
     memory_listener_register(&s->mem_listener, &address_space_memory);
 
     sel4_ext_vpci_bus_allowed = true;
+    sel4_irqfds_allowed = true;
 
     qemu_add_vm_change_state_handler(sel4_change_state_handler, s);
 
