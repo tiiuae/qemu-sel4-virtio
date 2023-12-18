@@ -21,15 +21,24 @@
 #ifdef CONFIG_SEL4_IS_POSSIBLE
 
 extern bool sel4_allowed;
-extern bool sel4_ext_vpci_bus;
+extern bool sel4_ext_vpci_bus_allowed;
+extern bool sel4_ext_msi_allowed;
+extern bool sel4_irqfds_allowed;
+extern bool sel4_msi_via_irqfd_allowed;
 
-#define sel4_enabled()              (sel4_allowed)
-#define sel4_ext_vpci_bus_enabled() (sel4_ext_vpci_bus)
+#define sel4_enabled()                  (sel4_allowed)
+#define sel4_ext_vpci_bus_enabled()     (sel4_ext_vpci_bus_allowed)
+#define sel4_ext_msi_enabled()          (sel4_ext_msi_allowed)
+#define sel4_irqfds_enabled()           (sel4_irqfds_allowed)
+#define sel4_msi_via_irqfd_enabled()    (sel4_msi_via_irqfd_allowed)
 
 #else /* !CONFIG_SEL4_IS_POSSIBLE */
 
-#define sel4_enabled()              (false)
-#define sel4_ext_vpci_bus_enabled() (false)
+#define sel4_enabled()                  (false)
+#define sel4_ext_vpci_bus_enabled()     (false)
+#define sel4_ext_msi_enabled()          (false)
+#define sel4_irqfds_enabled()           (false)
+#define sel4_msi_via_irqfd_enabled()    (false)
 
 #endif /* CONFIG_SEL4_IS_POSSIBLE */
 
