@@ -51,8 +51,11 @@ typedef enum {
 MemMapEntry sel4_region_get(SeL4MemoryRegion region);
 int sel4_mmio_region_add(MemoryRegionSection *section);
 int sel4_mmio_region_del(MemoryRegionSection *section);
-void sel4_register_pci_device(PCIDevice *d);
 void sel4_set_irq(unsigned int irq, bool);
+void sel4_register_pci_device(PCIDevice *d);
+int sel4_add_msi_route(int vector, PCIDevice *dev);
+int sel4_add_irqfd_notifier(EventNotifier *n, EventNotifier *rn, int virq);
+int sel4_remove_irqfd_notifier(EventNotifier *n, int virq);
 
 int sel4_pcihost_set_irq_num(DeviceState *dev, int index, int gsi);
 
