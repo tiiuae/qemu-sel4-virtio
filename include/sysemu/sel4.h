@@ -58,5 +58,6 @@ int sel4_add_irqfd_notifier(EventNotifier *n, EventNotifier *rn, int virq);
 int sel4_remove_irqfd_notifier(EventNotifier *n, int virq);
 
 int sel4_pcihost_set_irq_num(DeviceState *dev, int index, int gsi);
+void sel4_msi_trigger(PCIDevice *dev, MSIMessage msg);
 
 #endif
