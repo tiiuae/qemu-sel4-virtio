@@ -48,6 +48,7 @@ typedef struct SeL4State
     int ioreqfd;
     struct sel4_iohandler_buffer *ioreq_buffer;
     MemoryListener mem_listener;
+    DeviceListener dev_listener;
 } SeL4State;
 
 #define TYPE_SEL4_ACCEL ACCEL_CLASS_NAME("sel4")
@@ -312,6 +313,20 @@ static void sel4_io_ioeventfd_del(MemoryListener *listener,
     }
 }
 
+uint32_t sel4_msi_data_to_gsi(uint32_t data)
+{
+    return data & 0xffff;
+}
+
+void sel4_msi_trigger(PCIDevice *dev, MSIMessage msg)
+{
+    assert(sel4_ext_msi_enabled());
+
+    uint32_t irq = sel4_msi_data_to_gsi(msg.data);
+    sel4_set_irq(irq, true);
+    sel4_set_irq(irq, false);
+}
+
 int sel4_add_msi_route(int vector, PCIDevice *dev)
 {
     MSIMessage msg = {0, 0};
@@ -321,7 +336,7 @@ int sel4_add_msi_route(int vector, PCIDevice *dev)
     }
 
     // direct gsi mapping
-    return msg.data & 0xffff;
+    return sel4_msi_data_to_gsi(msg.data);
 }
 
 static int sel4_assign_irqfd(SeL4State *s, EventNotifier *event,
@@ -366,6 +381,19 @@ int sel4_remove_irqfd_notifier(EventNotifier *n, int virq)
     SeL4State *s = SEL4_STATE(current_accel());
     return sel4_assign_irqfd(s, n, NULL, virq, false);
 }
+
+static void sel4_dev_realize(DeviceListener *listener,
+                             DeviceState *dev)
+{
+    if (object_dynamic_cast(OBJECT(dev), TYPE_PCI_DEVICE)) {
+        PCIDevice *pci_dev = PCI_DEVICE(dev);
+        pci_dev->msi_trigger = sel4_msi_trigger;
+    }
+}
+
+static DeviceListener sel4_dev_listener = {
+    .realize = sel4_dev_realize,
+};
 
 static int sel4_init(MachineState *ms)
 {
@@ -439,7 +467,16 @@ static int sel4_init(MachineState *ms)
     memory_listener_register(&s->mem_listener, &address_space_memory);
 
     sel4_ext_vpci_bus_allowed = true;
+    sel4_ext_msi_allowed = true;
     sel4_irqfds_allowed = true;
+
+    if (sel4_ext_msi_enabled()) {
+        s->dev_listener = sel4_dev_listener;
+        device_listener_register(&s->dev_listener);
+
+        msi_nonbroken = true;
+        sel4_msi_via_irqfd_allowed = sel4_irqfds_enabled();
+    }
 
     qemu_add_vm_change_state_handler(sel4_change_state_handler, s);
 
