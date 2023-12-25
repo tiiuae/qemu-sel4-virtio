@@ -1,5 +1,5 @@
 /*
- * Copyright 2022, Technology Innovation Institute
+ * Copyright 2022, 2023, Technology Innovation Institute
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -24,6 +24,7 @@
 #include <stdarg.h>
 #include <sys/ioctl.h>
 #include <sel4/sel4_virt.h>
+#include <sel4/sel4_vmm_rpc.h>
 
 void tii_printf(const char *fmt, ...);
 
@@ -46,7 +47,7 @@ typedef struct SeL4State
     int fd;
     int vmfd;
     int ioreqfd;
-    struct sel4_iohandler_buffer *ioreq_buffer;
+    void *iobuf;
     MemoryListener mem_listener;
     DeviceListener dev_listener;
 } SeL4State;
@@ -217,9 +218,10 @@ static inline void handle_ioreq(SeL4State *s)
 {
     struct sel4_ioreq *ioreq;
     int slot;
+    struct sel4_ioreq *mmio_reqs = device_mmio_reqs(s->iobuf);
 
     for (slot = 0; slot < SEL4_MAX_IOREQS; slot++) {
-        ioreq = &s->ioreq_buffer->request_slots[slot];
+        ioreq = &mmio_reqs[slot];
         if (qatomic_load_acquire(&ioreq->state) == SEL4_IOREQ_STATE_PROCESSING) {
             if (ioreq->addr_space == AS_GLOBAL) {
                 sel4_mmio_do_io(ioreq);
@@ -454,9 +456,9 @@ static int sel4_init(MachineState *ms)
     }
     s->ioreqfd = rc;
 
-    s->ioreq_buffer = mmap(NULL, sizeof(*s->ioreq_buffer),
-                           PROT_READ | PROT_WRITE, MAP_SHARED, s->ioreqfd, 0);
-    if (!s->ioreq_buffer) {
+    s->iobuf = mmap(NULL, IOBUF_NUM_PAGES * 4096, PROT_READ | PROT_WRITE,
+                    MAP_SHARED, s->ioreqfd, 0);
+    if (s->iobuf == MAP_FAILED) {
         fprintf(stderr, "sel4: iohandler mmap failed %m\n");
         goto err;
     }
@@ -483,8 +485,8 @@ static int sel4_init(MachineState *ms)
     return 0;
 
 err:
-    if (s->ioreq_buffer)
-        munmap(s->ioreq_buffer, sizeof(*s->ioreq_buffer));
+    if (s->iobuf)
+        munmap(s->iobuf, IOBUF_NUM_PAGES * 4096);
 
     if (ram)
         munmap(ram, ms->ram_size);
@@ -677,7 +679,7 @@ static void sel4_accel_instance_init(Object *obj)
     s->fd = -1;
     s->vmfd = -1;
     s->ioreqfd = -1;
-    s->ioreq_buffer = NULL;
+    s->iobuf = NULL;
 
     qemu_mutex_init(&sel4_mmio_regions_lock);
 }
