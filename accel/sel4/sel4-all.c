@@ -221,16 +221,16 @@ static int sel4_pci_do_io(unsigned int addr_space, unsigned int dir,
     return 0;
 }
 
-static inline int handle_mmio(SeL4State *s, unsigned int slot,
-                              struct sel4_ioreq *ioreq)
+static inline int handle_mmio(SeL4State *s, rpcmsg_t *req)
 {
     int err;
 
-    seL4_Word dir = ioreq->direction;
-    seL4_Word as = ioreq->addr_space;
-    seL4_Word len = ioreq->len;
-    seL4_Word addr = ioreq->addr;
-    seL4_Word data = ioreq->data;
+    seL4_Word dir = BIT_FIELD_GET(req->mr0, RPC_MR0_MMIO_DIRECTION);
+    seL4_Word as = BIT_FIELD_GET(req->mr0, RPC_MR0_MMIO_ADDR_SPACE);
+    seL4_Word len = BIT_FIELD_GET(req->mr0, RPC_MR0_MMIO_LENGTH);
+    seL4_Word slot = BIT_FIELD_GET(req->mr0, RPC_MR0_MMIO_SLOT);
+    seL4_Word addr = req->mr1;
+    seL4_Word data = req->mr2;
 
     qemu_mutex_lock_iothread();
 
@@ -247,22 +247,12 @@ static inline int handle_mmio(SeL4State *s, unsigned int slot,
         exit(1);
     }
 
-    sel4_vm_ioctl(s, SEL4_NOTIFY_IO_HANDLED, slot);
-
-    return 0;
-}
-
-static inline void handle_ioreq(SeL4State *s)
-{
-    struct sel4_ioreq *ioreq;
-    int slot;
-
-    for (slot = 0; slot < SEL4_MAX_IOREQS; slot++) {
-        ioreq = &device_mmio_reqs(s->maps[SEL4_MEM_MAP_IOBUF].ptr)[slot];
-        if (qatomic_load_acquire(&ioreq->state) == SEL4_IOREQ_STATE_PROCESSING) {
-            handle_mmio(s, slot, ioreq);
-        }
+    err = driver_ack_mmio_finish(&s->rpc, slot, data);
+    if (err) {
+        return RPCMSG_STATE_ERROR;
     }
+
+    return RPCMSG_STATE_FREE;
 }
 
 static unsigned int rpc_process(rpcmsg_t *msg, void *cookie)
@@ -271,6 +261,9 @@ static unsigned int rpc_process(rpcmsg_t *msg, void *cookie)
     SeL4State *s = cookie;
 
     switch (QEMU_OP(msg->mr0)) {
+    case QEMU_OP_MMIO:
+        next_state = handle_mmio(s, msg);
+        break;
     default:
         fprintf(stderr, "Unknown op %u\n", QEMU_OP(msg->mr0));
         break;
@@ -289,7 +282,6 @@ static void *do_sel4_virtio(void *opaque)
         if (rc)
             continue;
 
-        handle_ioreq(s);
         rpcmsg_queue_iterate(s->rpc.rx_queue, rpc_process, s);
     }
 
