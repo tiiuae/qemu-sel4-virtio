@@ -46,8 +46,10 @@ typedef struct SeL4State
 
     int fd;
     int vmfd;
-    int ioreqfd;
-    void *iobuf;
+    struct {
+        int fd;
+        void *ptr;
+    } maps[NUM_SEL4_MEM_MAP];
     MemoryListener mem_listener;
     DeviceListener dev_listener;
 } SeL4State;
@@ -218,10 +220,9 @@ static inline void handle_ioreq(SeL4State *s)
 {
     struct sel4_ioreq *ioreq;
     int slot;
-    struct sel4_ioreq *mmio_reqs = device_mmio_reqs(s->iobuf);
 
     for (slot = 0; slot < SEL4_MAX_IOREQS; slot++) {
-        ioreq = &mmio_reqs[slot];
+        ioreq = &device_mmio_reqs(s->maps[SEL4_MEM_MAP_IOBUF].ptr)[slot];
         if (qatomic_load_acquire(&ioreq->state) == SEL4_IOREQ_STATE_PROCESSING) {
             if (ioreq->addr_space == AS_GLOBAL) {
                 sel4_mmio_do_io(ioreq);
@@ -397,16 +398,30 @@ static DeviceListener sel4_dev_listener = {
     .realize = sel4_dev_realize,
 };
 
+static unsigned long sel4_mem_map_size(MachineState *ms, unsigned int index)
+{
+    switch (index) {
+    case SEL4_MEM_MAP_RAM:
+        return ms->ram_size;
+    case SEL4_MEM_MAP_IOBUF:
+        return IOBUF_NUM_PAGES * 4096;
+    default:
+        break;
+    }
+
+    return 0;
+}
+
 static int sel4_init(MachineState *ms)
 {
     MachineClass *mc = MACHINE_GET_CLASS(ms);
     SeL4State *s = SEL4_STATE(ms->accelerator);
     int rc;
+    int i;
     struct sel4_vm_params params = {
         .id = 1,
         .ram_size = ms->ram_size,
     };
-    void *ram = NULL;
 
     char *p = getenv("VMID");
     if (p) {
@@ -432,36 +447,32 @@ static int sel4_init(MachineState *ms)
 
     s->vmfd = rc;
 
-    /* setup ram */
-    ram = mmap(NULL, ms->ram_size, PROT_READ | PROT_WRITE,
-               MAP_SHARED, s->vmfd, 0);
-    if (!ram) {
-        fprintf(stderr, "sel4: ram mmap failed: %m\n");
-        goto err;
+    for (i = 0; i < NUM_SEL4_MEM_MAP; i++) {
+        rc = sel4_vm_ioctl(s, SEL4_CREATE_IO_HANDLER, i);
+        if (rc < 0) {
+            fprintf(stderr, "sel4: create IO handler failed: %d %s\n", -rc,
+                    strerror(-rc));
+            goto err;
+        }
+
+        s->maps[i].fd = rc;
+        s->maps[i].ptr = mmap(NULL, sel4_mem_map_size(ms, i),
+                              PROT_READ | PROT_WRITE, MAP_SHARED,
+                              s->maps[i].fd, 0);
+        if (s->maps[i].ptr == MAP_FAILED) {
+            fprintf(stderr, "sel4: iohandler mmap failed %m\n");
+            goto err;
+        }
     }
 
+    /* setup ram */
     memory_region_init_ram_ptr(&ram_mr, OBJECT(ms), "virt.ram",
-                               ms->ram_size, ram);
+                               ms->ram_size, s->maps[SEL4_MEM_MAP_RAM].ptr);
     vmstate_register_ram_global(&ram_mr);
     ms->ram = &ram_mr;
 
     /* do not allocate RAM from generic code */
     mc->default_ram_id = NULL;
-
-    rc = sel4_vm_ioctl(s, SEL4_CREATE_IO_HANDLER, 0);
-    if (rc < 0) {
-        fprintf(stderr, "sel4: create IO handler failed: %d %s\n", -rc,
-                strerror(-rc));
-        goto err;
-    }
-    s->ioreqfd = rc;
-
-    s->iobuf = mmap(NULL, IOBUF_NUM_PAGES * 4096, PROT_READ | PROT_WRITE,
-                    MAP_SHARED, s->ioreqfd, 0);
-    if (s->iobuf == MAP_FAILED) {
-        fprintf(stderr, "sel4: iohandler mmap failed %m\n");
-        goto err;
-    }
 
     s->mem_listener.eventfd_add = sel4_io_ioeventfd_add;
     s->mem_listener.eventfd_del = sel4_io_ioeventfd_del;
@@ -485,11 +496,14 @@ static int sel4_init(MachineState *ms)
     return 0;
 
 err:
-    if (s->iobuf)
-        munmap(s->iobuf, IOBUF_NUM_PAGES * 4096);
-
-    if (ram)
-        munmap(ram, ms->ram_size);
+    i = NUM_SEL4_MEM_MAP;
+    while (i) {
+        i--;
+        if (s->maps[i].ptr) {
+            munmap(s->maps[i].ptr, sel4_mem_map_size(ms, i));
+            close(s->maps[i].fd);
+        }
+    }
 
     if (s->vmfd >= 0)
         close(s->vmfd);
@@ -674,12 +688,15 @@ static void sel4_accel_class_init(ObjectClass *oc, void *data)
 
 static void sel4_accel_instance_init(Object *obj)
 {
+    int i;
     SeL4State *s = SEL4_STATE(obj);
 
     s->fd = -1;
     s->vmfd = -1;
-    s->ioreqfd = -1;
-    s->iobuf = NULL;
+    for (i = 0; i < NUM_SEL4_MEM_MAP; i++) {
+        s->maps[i].ptr = NULL;
+        s->maps[i].fd = -1;
+    }
 
     qemu_mutex_init(&sel4_mmio_regions_lock);
 }
