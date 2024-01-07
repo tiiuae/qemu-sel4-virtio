@@ -102,8 +102,6 @@ static int sel4_vm_ioctl(SeL4State *s, int type, ...)
     return ret;
 }
 
-void seL4_Yield(void){}
-
 static void sel4_setup_post(MachineState *ms, AccelState *accel)
 {
     SeL4State *s = SEL4_STATE(ms->accelerator);
