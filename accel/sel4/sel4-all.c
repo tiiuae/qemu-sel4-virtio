@@ -178,44 +178,78 @@ static void sel4_change_state_handler(void *opaque, bool running, RunState state
     }
 }
 
-static void sel4_mmio_do_io(struct sel4_ioreq *ioreq)
+static int sel4_mmio_do_io(unsigned int dir, seL4_Word addr, seL4_Word *data,
+                           unsigned int len)
 {
-    qemu_mutex_lock_iothread();
-    switch (ioreq->direction) {
-    case SEL4_IO_DIR_WRITE:
-        address_space_write(&address_space_memory, ioreq->addr, MEMTXATTRS_UNSPECIFIED, &ioreq->data, ioreq->len);
-        break;
-    case SEL4_IO_DIR_READ:
-        address_space_read(&address_space_memory, ioreq->addr, MEMTXATTRS_UNSPECIFIED, &ioreq->data, ioreq->len);
-        break;
-    default:
-        error_report("sel4: invalid ioreq direction (%d)", ioreq->direction);
-        break;
+    MemTxResult result;
+
+    if (dir == SEL4_IO_DIR_READ) {
+        result = address_space_read(&address_space_memory, addr,
+                                    MEMTXATTRS_UNSPECIFIED, data, len);
+    } else {
+        result = address_space_write(&address_space_memory, addr,
+                                     MEMTXATTRS_UNSPECIFIED, data, len);
     }
-    qemu_mutex_unlock_iothread();
+
+    return (result == MEMTX_OK) ? 0 : -1;
 }
 
-static void sel4_pci_do_io(struct sel4_ioreq *ioreq)
+static int sel4_pci_do_io(unsigned int addr_space, unsigned int dir,
+                          seL4_Word addr, seL4_Word *data,
+                          unsigned int len)
 {
-    PCIDevice *dev = pci_devs[ioreq->addr_space];
+    if (addr_space >= ARRAY_SIZE(pci_devs)) {
+        return -1;
+    }
+
+    PCIDevice *dev = pci_devs[addr_space];
+    if (!dev) {
+        return -1;
+    }
+
     uint64_t val;
 
-    qemu_mutex_lock_iothread();
-    switch (ioreq->direction) {
-    case SEL4_IO_DIR_WRITE:
+    if (dir == SEL4_IO_DIR_READ) {
+        val = dev->config_read(dev, addr, len);
+        memcpy(data, &val, len);
+    } else {
         val = 0;
-        memcpy(&val, &ioreq->data, ioreq->len);
-        dev->config_write(dev, ioreq->addr, val, ioreq->len);
-        break;
-    case SEL4_IO_DIR_READ:
-        val = dev->config_read(dev, ioreq->addr, ioreq->len);
-        memcpy(&ioreq->data, &val, ioreq->len);
-        break;
-    default:
-        error_report("sel4: invalid ioreq direction (%d)", ioreq->direction);
-        break;
+        memcpy(&val, data, len);
+        dev->config_write(dev, addr, val, len);
     }
+
+    return 0;
+}
+
+static inline int handle_mmio(SeL4State *s, unsigned int slot,
+                              struct sel4_ioreq *ioreq)
+{
+    int err;
+
+    seL4_Word dir = ioreq->direction;
+    seL4_Word as = ioreq->addr_space;
+    seL4_Word len = ioreq->len;
+    seL4_Word addr = ioreq->addr;
+    seL4_Word data = ioreq->data;
+
+    qemu_mutex_lock_iothread();
+
+    if (as == AS_GLOBAL) {
+        err = sel4_mmio_do_io(dir, addr, &data, len);
+    } else {
+        err = sel4_pci_do_io(as, dir, addr, &data, len);
+    }
+
     qemu_mutex_unlock_iothread();
+
+    if (err) {
+        fprintf(stderr, "%s failed, addr=0x%lx, dir=%lu\n", __func__, addr, dir);
+        exit(1);
+    }
+
+    sel4_vm_ioctl(s, SEL4_NOTIFY_IO_HANDLED, slot);
+
+    return 0;
 }
 
 static inline void handle_ioreq(SeL4State *s)
@@ -226,13 +260,7 @@ static inline void handle_ioreq(SeL4State *s)
     for (slot = 0; slot < SEL4_MAX_IOREQS; slot++) {
         ioreq = &device_mmio_reqs(s->maps[SEL4_MEM_MAP_IOBUF].ptr)[slot];
         if (qatomic_load_acquire(&ioreq->state) == SEL4_IOREQ_STATE_PROCESSING) {
-            if (ioreq->addr_space == AS_GLOBAL) {
-                sel4_mmio_do_io(ioreq);
-            } else {
-                sel4_pci_do_io(ioreq);
-            }
-
-            sel4_vm_ioctl(s, SEL4_NOTIFY_IO_HANDLED, slot);
+            handle_mmio(s, slot, ioreq);
         }
     }
 }
