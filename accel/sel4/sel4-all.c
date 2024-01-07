@@ -1,5 +1,5 @@
 /*
- * Copyright 2022, 2023, Technology Innovation Institute
+ * Copyright 2022, 2023, 2024, Technology Innovation Institute
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -24,7 +24,8 @@
 #include <stdarg.h>
 #include <sys/ioctl.h>
 #include <sel4/sel4_virt.h>
-#include <sel4/sel4_vmm_rpc.h>
+
+#define EVENT_BAR_EMIT_REGISTER 0x0
 
 void tii_printf(const char *fmt, ...);
 
@@ -35,6 +36,8 @@ bool sel4_ext_vpci_bus_allowed;
 bool sel4_ext_msi_allowed;
 bool sel4_irqfds_allowed;
 bool sel4_msi_via_irqfd_allowed;
+
+const unsigned int my_rpcmsg_state = RPCMSG_STATE_DEVICE_USER;
 
 static QemuThread sel4_virtio_thread;
 
@@ -50,6 +53,7 @@ typedef struct SeL4State
         int fd;
         void *ptr;
     } maps[NUM_SEL4_MEM_MAP];
+    sel4_rpc_t rpc;
     MemoryListener mem_listener;
     DeviceListener dev_listener;
 } SeL4State;
@@ -233,6 +237,20 @@ static inline void handle_ioreq(SeL4State *s)
     }
 }
 
+static unsigned int rpc_process(rpcmsg_t *msg, void *cookie)
+{
+    unsigned int next_state = RPCMSG_STATE_ERROR;
+    SeL4State *s = cookie;
+
+    switch (QEMU_OP(msg->mr0)) {
+    default:
+        fprintf(stderr, "Unknown op %u\n", QEMU_OP(msg->mr0));
+        break;
+    }
+
+    return next_state;
+}
+
 static void *do_sel4_virtio(void *opaque)
 {
     SeL4State *s = opaque;
@@ -244,6 +262,7 @@ static void *do_sel4_virtio(void *opaque)
             continue;
 
         handle_ioreq(s);
+        rpcmsg_queue_iterate(s->rpc.rx_queue, rpc_process, s);
     }
 
     return NULL;
@@ -403,11 +422,21 @@ static unsigned long sel4_mem_map_size(MachineState *ms, unsigned int index)
         return ms->ram_size;
     case SEL4_MEM_MAP_IOBUF:
         return IOBUF_NUM_PAGES * 4096;
+    case SEL4_MEM_MAP_EVENT_BAR:
+        return 4096;
     default:
         break;
     }
 
     return 0;
+}
+
+static void s2_fault_doorbell(void *cookie)
+{
+    uint32_t *event_bar = cookie;
+
+    /* data does not matter, just the write fault */
+    event_bar[0] = 1;
 }
 
 static int sel4_init(MachineState *ms)
@@ -471,6 +500,16 @@ static int sel4_init(MachineState *ms)
 
     /* do not allocate RAM from generic code */
     mc->default_ram_id = NULL;
+
+    rc = sel4_rpc_init(&s->rpc,
+                       device_rx_queue(s->maps[SEL4_MEM_MAP_IOBUF].ptr),
+                       device_tx_queue(s->maps[SEL4_MEM_MAP_IOBUF].ptr),
+                       s2_fault_doorbell,
+                       (void *)(((uintptr_t)s->maps[SEL4_MEM_MAP_EVENT_BAR].ptr) + EVENT_BAR_EMIT_REGISTER));
+    if (rc) {
+        fprintf(stderr, "sel4: sel4_rpc_init() failed: %d\n", rc);
+        goto err;
+    }
 
     s->mem_listener.eventfd_add = sel4_io_ioeventfd_add;
     s->mem_listener.eventfd_del = sel4_io_ioeventfd_del;
