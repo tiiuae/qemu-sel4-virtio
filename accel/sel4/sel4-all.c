@@ -216,12 +216,12 @@ static int sel4_pci_do_io(unsigned int addr_space, unsigned int dir,
     uint64_t val;
 
     if (dir == SEL4_IO_DIR_READ) {
-        val = dev->config_read(dev, addr, len);
+        val = pci_host_config_read_common(dev, addr, pci_config_size(dev), len);;
         memcpy(data, &val, len);
     } else {
         val = 0;
         memcpy(&val, data, len);
-        dev->config_write(dev, addr, val, len);
+        pci_host_config_write_common(dev, addr, pci_config_size(dev), val, len);
     }
 
     return 0;
