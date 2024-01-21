@@ -107,8 +107,7 @@ static void sel4_pcihost_realize(DeviceState *dev, Error **errp)
         s->irq_num[i] = -1;
     }
 
-
-    pci->bus = pci_register_root_bus(dev, "sel4-pci.0", sel4_pcihost_set_irq,
+    pci->bus = pci_register_root_bus(dev, "sel4-pcie.0", sel4_pcihost_set_irq,
                                      sel4_pcihost_map_irq_fn,
                                      s, &s->mmio, &s->ioport, 0,
                                      SEL4_VPCI_INTERRUPTS, TYPE_PCIE_BUS);
