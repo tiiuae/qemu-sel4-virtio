@@ -128,7 +128,7 @@ void tii_printf(const char *fmt, ...)
     qmp_ringbuf_write("debug", tmp, false, 0, &err);
 }
 
-static unsigned int pci_dev_count;
+static unsigned int pci_dev_count = 0;
 static PCIDevice *pci_devs[SEL4_VPCI_INTERRUPTS];
 
 void sel4_register_pci_device(PCIDevice *d)
