@@ -37,8 +37,6 @@ bool sel4_ext_msi_allowed;
 bool sel4_irqfds_allowed;
 bool sel4_msi_via_irqfd_allowed;
 
-const unsigned int my_rpcmsg_state = RPCMSG_STATE_DEVICE_USER;
-
 static QemuThread sel4_virtio_thread;
 
 static void *do_sel4_virtio(void *opaque);
@@ -288,7 +286,7 @@ static void *do_sel4_virtio(void *opaque)
         if (rc)
             continue;
 
-        rpcmsg_queue_iterate(s->rpc.rx_queue, rpc_process, s);
+        sel4_rpc_rx_process(&s->rpc, rpc_process, s);
     }
 
     return NULL;
@@ -530,6 +528,7 @@ static int sel4_init(MachineState *ms)
     rc = sel4_rpc_init(&s->rpc,
                        device_rx_queue(s->maps[SEL4_MEM_MAP_IOBUF].ptr),
                        device_tx_queue(s->maps[SEL4_MEM_MAP_IOBUF].ptr),
+                       RPCMSG_STATE_DEVICE_USER,
                        s2_fault_doorbell,
                        (void *)(((uintptr_t)s->maps[SEL4_MEM_MAP_EVENT_BAR].ptr) + EVENT_BAR_EMIT_REGISTER));
     if (rc) {
