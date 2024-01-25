@@ -298,6 +298,7 @@ static int sel4_ioeventfd_set(SeL4State *s, int fd, hwaddr addr, uint32_t val,
     struct sel4_ioeventfd_config config = {
         .fd = fd,
         .addr = addr,
+        .addr_space = AS_GLOBAL,
         .len = size,
         .data = datamatch ? val : 0,
         .flags = 0,
