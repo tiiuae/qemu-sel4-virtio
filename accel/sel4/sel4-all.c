@@ -251,29 +251,24 @@ static inline int handle_mmio(SeL4State *s, rpcmsg_t *req)
         exit(1);
     }
 
-    err = driver_ack_mmio_finish(&s->rpc, slot, data);
-    if (err) {
-        return RPCMSG_STATE_ERROR;
-    }
-
-    return RPCMSG_STATE_FREE;
+    return driver_ack_mmio_finish(&s->rpc, slot, data);
 }
 
-static unsigned int rpc_process(rpcmsg_t *msg, void *cookie)
+static int rpc_process(rpcmsg_t *msg, void *cookie)
 {
-    unsigned int next_state = RPCMSG_STATE_ERROR;
     SeL4State *s = cookie;
+    int ret = -1;
 
     switch (QEMU_OP(msg->mr0)) {
     case QEMU_OP_MMIO:
-        next_state = handle_mmio(s, msg);
+        ret = handle_mmio(s, msg);
         break;
     default:
-        fprintf(stderr, "Unknown op %u\n", QEMU_OP(msg->mr0));
+        fprintf(stderr, "Unknown op %lu\n", QEMU_OP(msg->mr0));
         break;
     }
 
-    return next_state;
+    return ret;
 }
 
 static void *do_sel4_virtio(void *opaque)
@@ -529,7 +524,6 @@ static int sel4_init(MachineState *ms)
     rc = sel4_rpc_init(&s->rpc,
                        device_rx_queue(s->maps[SEL4_MEM_MAP_IOBUF].ptr),
                        device_tx_queue(s->maps[SEL4_MEM_MAP_IOBUF].ptr),
-                       RPCMSG_STATE_DEVICE_USER,
                        s2_fault_doorbell,
                        (void *)(((uintptr_t)s->maps[SEL4_MEM_MAP_EVENT_BAR].ptr) + EVENT_BAR_EMIT_REGISTER));
     if (rc) {
