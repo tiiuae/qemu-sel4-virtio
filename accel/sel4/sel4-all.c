@@ -52,7 +52,7 @@ typedef struct SeL4State
         int fd;
         void *ptr;
     } maps[NUM_SEL4_MEM_MAP];
-    sel4_rpc_t rpc;
+    vso_rpc_t rpc;
     MemoryListener mem_listener;
     DeviceListener dev_listener;
 } SeL4State;
@@ -162,9 +162,9 @@ void sel4_set_irq(unsigned int irq, bool state)
     SeL4State *s = SEL4_STATE(current_accel());
 
     if (state) {
-        err = driver_req_set_irqline(&s->rpc, irq);
+        err = device_rpc_req_set_irqline(&s->rpc, irq);
     } else {
-        err = driver_req_clear_irqline(&s->rpc, irq);
+        err = device_rpc_req_clear_irqline(&s->rpc, irq);
     }
 
     if (err) {
@@ -233,7 +233,6 @@ static inline int handle_mmio(SeL4State *s, rpcmsg_t *req)
     seL4_Word dir = BIT_FIELD_GET(req->mr0, RPC_MR0_MMIO_DIRECTION);
     seL4_Word as = BIT_FIELD_GET(req->mr0, RPC_MR0_MMIO_ADDR_SPACE);
     seL4_Word len = BIT_FIELD_GET(req->mr0, RPC_MR0_MMIO_LENGTH);
-    seL4_Word slot = BIT_FIELD_GET(req->mr0, RPC_MR0_MMIO_SLOT);
     seL4_Word addr = req->mr1;
     seL4_Word data = req->mr2;
 
@@ -252,7 +251,7 @@ static inline int handle_mmio(SeL4State *s, rpcmsg_t *req)
         exit(1);
     }
 
-    return driver_ack_mmio_finish(&s->rpc, slot, data);
+    return driver_rpc_ack_mmio_finish(&s->rpc, req, data);
 }
 
 static int rpc_process(rpcmsg_t *msg, void *cookie)
@@ -276,13 +275,19 @@ static void *do_sel4_virtio(void *opaque)
 {
     SeL4State *s = opaque;
     int rc;
+    rpcmsg_t *msg;
 
     for (;;) {
         rc = sel4_vm_ioctl(s, SEL4_WAIT_IO, 0);
         if (rc)
             continue;
 
-        sel4_rpc_rx_process(&s->rpc, rpc_process, s);
+        for_each_driver_rpc_req(msg, &s->rpc) {
+            rc = rpc_process(msg, s);
+            if (rc) {
+                fprintf(stderr, "processing rpc failed (%d)\n", rc);
+            }
+        }
     }
 
     return NULL;
@@ -522,11 +527,11 @@ static int sel4_init(MachineState *ms)
     /* do not allocate RAM from generic code */
     mc->default_ram_id = NULL;
 
-    rc = sel4_rpc_init(&s->rpc,
-                       device_rx_queue(s->maps[SEL4_MEM_MAP_IOBUF].ptr),
-                       device_tx_queue(s->maps[SEL4_MEM_MAP_IOBUF].ptr),
-                       s2_fault_doorbell,
-                       (void *)(((uintptr_t)s->maps[SEL4_MEM_MAP_EVENT_BAR].ptr) + EVENT_BAR_EMIT_REGISTER));
+    rc = vso_rpc_init(&s->rpc,
+                      vso_rpc_device,
+                      s->maps[SEL4_MEM_MAP_IOBUF].ptr,
+                      s2_fault_doorbell,
+                      (void *)(((uintptr_t)s->maps[SEL4_MEM_MAP_EVENT_BAR].ptr) + EVENT_BAR_EMIT_REGISTER));
     if (rc) {
         fprintf(stderr, "sel4: sel4_rpc_init() failed: %d\n", rc);
         goto err;
