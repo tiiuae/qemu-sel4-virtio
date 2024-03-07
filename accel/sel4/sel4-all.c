@@ -17,6 +17,7 @@
 #include "hw/boards.h"
 #include "hw/pci/pci.h"
 #include "hw/pci/pci_bus.h"
+#include "hw/pci/pci_host.h"
 #include "hw/pci/msi.h"
 #include "hw/pci/msix.h"
 #include "migration/vmstate.h"
@@ -353,7 +354,7 @@ static void sel4_io_ioeventfd_del(MemoryListener *listener,
     }
 }
 
-uint32_t sel4_msi_data_to_gsi(uint32_t data)
+static uint32_t sel4_msi_data_to_gsi(uint32_t data)
 {
     return data & 0xffff;
 }
@@ -731,6 +732,8 @@ int sel4_mmio_region_del(MemoryRegionSection *section)
             g_free(entry);
         }
     }
+
+    return 0;
 }
 
 static void sel4_accel_class_init(ObjectClass *oc, void *data)
